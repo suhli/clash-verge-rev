@@ -60,6 +60,9 @@ launchGuard:
   move: Күчерү
   ok: Ярый
 tray:
+  applicationProxy: Application proxy
+  applicationProxyGlobalOsd: Global traffic OSD
+  applicationProxyWindowOsd: Application window OSD
   dashboard: Идарә панеле
   ruleMode: Кагыйдә режимы
   globalMode: Глобаль режим

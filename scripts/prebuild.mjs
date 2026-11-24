@@ -18,6 +18,7 @@ import { log_debug, log_error, log_info, log_success } from './utils.mjs'
 const cwd = process.cwd()
 const TEMP_DIR = path.join(cwd, 'node_modules/.verge')
 const FORCE = process.argv.includes('--force') || process.argv.includes('-f')
+const PORTABLE = process.argv.includes('--portable')
 const VERSION_CACHE_FILE = path.join(TEMP_DIR, '.version_cache.json')
 const HASH_CACHE_FILE = path.join(TEMP_DIR, '.hash_cache.json')
 
@@ -48,9 +49,7 @@ const ARCH_MAP = {
   'loongarch64-unknown-linux-gnu': 'loong64',
 }
 
-const arg1 = process.argv.slice(2)[0]
-const arg2 = process.argv.slice(2)[1]
-const target = arg1 === '--force' || arg1 === '-f' ? arg2 : arg1
+const target = process.argv.slice(2).find((arg) => !arg.startsWith('-'))
 if (process.env.CI && !target) {
   throw new Error('prebuild requires an explicit target triple in CI')
 }
@@ -234,6 +233,10 @@ async function getLatestAlphaVersion() {
 }
 
 async function getLatestReleaseVersion() {
+  if (PORTABLE) {
+    META_VERSION = 'v1.19.34'
+    return
+  }
   if (!FORCE) {
     const cached = await getCachedVersion('META_VERSION')
     if (cached) {
@@ -660,6 +663,14 @@ async function resolveServiceBundle() {
       log_success(`Extracted service file: ${targetFile}`)
     }
 
+    if (PORTABLE) {
+      const license = await findExtractedFile(tempDir, 'LICENSE')
+      if (!license) throw new Error('Clash Verge service license is missing')
+      await fsp.copyFile(
+        license,
+        path.join(SERVICE_DIR, 'clash-verge-service-LICENSE.txt'),
+      )
+    }
     log_success(`service bundle finished: ${archiveFile}`)
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true })
@@ -743,8 +754,20 @@ const tasks = [
     retry: 5,
   },
   // After both sidecar tasks: it hashes what they downloaded.
-  { name: 'core_hashes', func: resolveCoreHashes, retry: 1, winOnly: true },
-  { name: 'plugin', func: resolvePlugin, retry: 5, winOnly: true },
+  {
+    name: 'core_hashes',
+    func: resolveCoreHashes,
+    retry: 1,
+    winOnly: true,
+    installerOnly: true,
+  },
+  {
+    name: 'plugin',
+    func: resolvePlugin,
+    retry: 5,
+    winOnly: true,
+    installerOnly: true,
+  },
   { name: 'service', func: resolveServiceBundle, retry: 5 },
   { name: 'mmdb', func: resolveMmdb, retry: 5 },
   { name: 'asn_mmdb', func: resolveASNMmdb, retry: 5 },
@@ -779,6 +802,7 @@ const tasks = [
 async function runTask() {
   const task = tasks.shift()
   if (!task) return
+  if (PORTABLE && task.installerOnly) return runTask()
   if (task.unixOnly && platform === 'win32') return runTask()
   if (task.winOnly && platform !== 'win32') return runTask()
   if (task.macosOnly && platform !== 'darwin') return runTask()

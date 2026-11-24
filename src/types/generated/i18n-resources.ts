@@ -194,6 +194,64 @@ export interface TranslationResources {
       }
     }
     layout: {
+      applicationProxy: {
+        action: string
+        add: string
+        anchor: string
+        background: string
+        bottomLeft: string
+        bottomRight: string
+        cancel: string
+        clickThrough: string
+        connectionDelay: string
+        connections: string
+        defaults: string
+        delay: string
+        down: string
+        edit: string
+        empty: string
+        executable: string
+        failOpen: string
+        fontSize: string
+        foreground: string
+        globalOverlay: string
+        globalX: string
+        globalY: string
+        hideIdle: string
+        icon: string
+        locked: string
+        manual: string
+        name: string
+        nodeDelay: string
+        offsetX: string
+        offsetY: string
+        opacity: string
+        overlay: string
+        pattern: string
+        preview: string
+        processes: string
+        refresh: string
+        refreshRate: string
+        remove: string
+        resetTotals: string
+        retry: string
+        running: string
+        save: string
+        scalePercent: string
+        search: string
+        showDelay: string
+        showRates: string
+        showTotals: string
+        stopped: string
+        systemProxy: string
+        title: string
+        topLeft: string
+        topRight: string
+        tunConflict: string
+        unavailable: string
+        up: string
+        windowOverlay: string
+      }
       components: {
         navigation: {
           menu: {
@@ -1589,6 +1647,7 @@ export interface TranslationResources {
           noDisney: string
           originalsOnly: string
           pending: string
+          risky: string
           unsupportedRegion: string
           yes: string
         }

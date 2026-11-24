@@ -648,6 +648,9 @@ async fn create_tray_menu(
 
     let profile_menu_items: Vec<CheckMenuItem<Wry>> = create_profile_menu_item(app_handle, profiles_preview)?;
 
+    #[cfg(all(windows, feature = "proxybridge-bundled"))]
+    let (application_proxy, global_osd, window_osd) = crate::application_proxy::tray_switches().await;
+
     let texts = MenuTexts::new();
     let profile_menu_items_refs: Vec<&dyn IsMenuItem<Wry>> = profile_menu_items
         .iter()
@@ -856,6 +859,41 @@ async fn create_tray_menu(
         separator,
         system_proxy as &dyn IsMenuItem<Wry>,
         tun_mode as &dyn IsMenuItem<Wry>,
+    ]);
+
+    #[cfg(all(windows, feature = "proxybridge-bundled"))]
+    let application_items = {
+        [
+            CheckMenuItem::with_id(
+                app_handle,
+                "tray_application_proxy",
+                clash_verge_i18n::t!("tray.applicationProxy"),
+                !tun_mode_enabled || application_proxy,
+                application_proxy,
+                None::<&str>,
+            )?,
+            CheckMenuItem::with_id(
+                app_handle,
+                "tray_application_proxy_global_osd",
+                clash_verge_i18n::t!("tray.applicationProxyGlobalOsd"),
+                true,
+                global_osd,
+                None::<&str>,
+            )?,
+            CheckMenuItem::with_id(
+                app_handle,
+                "tray_application_proxy_window_osd",
+                clash_verge_i18n::t!("tray.applicationProxyWindowOsd"),
+                true,
+                window_osd,
+                None::<&str>,
+            )?,
+        ]
+    };
+    #[cfg(all(windows, feature = "proxybridge-bundled"))]
+    menu_items.extend(application_items.iter().map(|item| item as &dyn IsMenuItem<Wry>));
+
+    menu_items.extend_from_slice(&[
         separator,
         lightweight_mode as &dyn IsMenuItem<Wry>,
         open_dir as &dyn IsMenuItem<Wry>,
@@ -941,6 +979,21 @@ fn on_menu_event(_: &AppHandle, event: MenuEvent) {
             }
             MenuIds::TUN_MODE => {
                 feat::toggle_tun_mode(None).await;
+            }
+            #[cfg(all(windows, feature = "proxybridge-bundled"))]
+            id @ ("tray_application_proxy"
+            | "tray_application_proxy_global_osd"
+            | "tray_application_proxy_window_osd") => {
+                use crate::application_proxy::{TraySwitch, toggle_tray};
+                let switch = match id {
+                    "tray_application_proxy" => TraySwitch::Proxy,
+                    "tray_application_proxy_global_osd" => TraySwitch::GlobalOverlay,
+                    _ => TraySwitch::WindowOverlay,
+                };
+                if let Err(error) = toggle_tray(switch).await {
+                    logging!(error, Type::Tray, "Application proxy tray action failed: {error:#}");
+                }
+                let _ = Tray::global().update_menu().await;
             }
             MenuIds::CLOSE_ALL_CONNECTIONS => {
                 if let Err(err) = handle::Handle::mihomo().close_all_connections().await {

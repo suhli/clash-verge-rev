@@ -60,6 +60,9 @@ launchGuard:
   move: 移動
   ok: 好
 tray:
+  applicationProxy: Application proxy
+  applicationProxyGlobalOsd: Global traffic OSD
+  applicationProxyWindowOsd: Application window OSD
   dashboard: 儀表板
   ruleMode: 規則模式
   globalMode: 全域模式

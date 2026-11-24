@@ -168,6 +168,8 @@ pub async fn quit() {
     }
 
     utils::server::shutdown_embedded_server();
+    #[cfg(all(windows, feature = "proxybridge-bundled"))]
+    crate::application_proxy::shutdown().await;
     let app_handle = handle::Handle::app_handle();
     app_handle.exit(if cleanup_result.all_success { 0 } else { 1 });
 }

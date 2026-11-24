@@ -60,6 +60,9 @@ launchGuard:
   move: انتقال
   ok: تأیید
 tray:
+  applicationProxy: Application proxy
+  applicationProxyGlobalOsd: Global traffic OSD
+  applicationProxyWindowOsd: Application window OSD
   dashboard: داشبورد
   ruleMode: حالت قوانین
   globalMode: حالت سراسری

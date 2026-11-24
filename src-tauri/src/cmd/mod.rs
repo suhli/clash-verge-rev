@@ -93,6 +93,7 @@ pub fn proxy_aware_error(error: &anyhow::Error) -> CommandFailure {
 
 // Command modules
 pub mod app;
+pub mod application_proxy;
 pub mod backup;
 pub mod clash;
 pub mod lightweight;

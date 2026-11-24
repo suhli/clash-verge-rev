@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 #![recursion_limit = "512"]
 
+#[cfg(all(windows, feature = "proxybridge-bundled"))]
+pub mod application_proxy;
 mod cmd;
 pub mod config;
 mod constants;
@@ -268,6 +270,9 @@ pub fn run() -> std::process::ExitCode {
 
             logging!(info, Type::System, "应用就绪");
             crate::utils::server::set_commands_ready();
+
+            #[cfg(all(windows, feature = "proxybridge-bundled"))]
+            crate::application_proxy::start_monitor();
 
             #[cfg(target_os = "macos")]
             if let Some(window) = _app_handle.get_webview_window("main") {

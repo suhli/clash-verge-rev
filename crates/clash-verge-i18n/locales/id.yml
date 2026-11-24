@@ -60,6 +60,9 @@ launchGuard:
   move: Pindahkan
   ok: OK
 tray:
+  applicationProxy: Application proxy
+  applicationProxyGlobalOsd: Global traffic OSD
+  applicationProxyWindowOsd: Application window OSD
   dashboard: Dasbor
   ruleMode: Mode Aturan
   globalMode: Mode Global

@@ -1,3 +1,4 @@
+import AppsOutlinedIcon from '@mui/icons-material/AppsOutlined'
 import DnsOutlinedIcon from '@mui/icons-material/DnsOutlined'
 import ForkRightOutlinedIcon from '@mui/icons-material/ForkRightOutlined'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
@@ -16,8 +17,10 @@ import ProxiesSvg from '@/assets/image/itemicon/proxies.svg?react'
 import RulesSvg from '@/assets/image/itemicon/rules.svg?react'
 import SettingsSvg from '@/assets/image/itemicon/settings.svg?react'
 import UnlockSvg from '@/assets/image/itemicon/unlock.svg?react'
+import getSystem from '@/utils/get-system'
 
 import { navigationItems } from './_navigation-meta'
+import ApplicationProxyPage from './application-proxy'
 import ConnectionsPage from './connections'
 import HomePage from './home'
 import LogsPage from './logs'
@@ -55,6 +58,19 @@ export const navItems: NavigationItem[] = [
     icon: [<LanguageOutlinedIcon key="mui" />, <ConnectionsSvg key="svg" />],
     Component: ConnectionsPage,
   },
+  ...(getSystem() === 'windows' &&
+  import.meta.env.VITE_PROXYBRIDGE_BUNDLED === '1'
+    ? [
+        {
+          ...navigationItems.applicationProxy,
+          icon: [
+            <AppsOutlinedIcon key="mui" />,
+            <AppsOutlinedIcon key="svg" />,
+          ],
+          Component: ApplicationProxyPage,
+        },
+      ]
+    : []),
   {
     ...navigationItems.rules,
     icon: [<ForkRightOutlinedIcon key="mui" />, <RulesSvg key="svg" />],

@@ -34,6 +34,12 @@ export async function copyClashEnv() {
   return commands.copyClashEnv()
 }
 
+export const getApplicationProxy = commands.getApplicationProxy
+export const setApplicationProxy = commands.saveApplicationProxy
+export const clearApplicationProxyTotals = commands.resetApplicationProxyTotals
+export const getApplicationProxyProcesses =
+  commands.listApplicationProxyProcesses
+
 export async function getProfiles(): Promise<IProfilesConfig> {
   return commands.getProfiles()
 }

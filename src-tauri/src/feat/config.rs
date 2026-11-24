@@ -38,6 +38,10 @@ pub(super) async fn apply_verge_patch_locked(
     patch: &IVerge,
     not_save_file: bool,
 ) -> Result<()> {
+    #[cfg(all(windows, feature = "proxybridge-bundled"))]
+    if patch.enable_tun_mode == Some(true) && crate::application_proxy::tun_conflict().await {
+        anyhow::bail!("Turn off application proxy before enabling TUN");
+    }
     super::executor::apply(
         _config_write,
         super::executor::Patch::Verge {

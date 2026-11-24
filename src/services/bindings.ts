@@ -10,6 +10,14 @@ export const commands = {
   exportDiagnosticInfo: () => __TAURI_INVOKE<null>('export_diagnostic_info'),
   probeListener: (request: ListenerProbe) =>
     __TAURI_INVOKE<ListenerProbeOutcome>('probe_listener', { request }),
+  getApplicationProxy: () =>
+    __TAURI_INVOKE<JsonValue | null>('get_application_proxy'),
+  saveApplicationProxy: (settings: JsonValue) =>
+    __TAURI_INVOKE<JsonValue>('save_application_proxy', { settings }),
+  resetApplicationProxyTotals: () =>
+    __TAURI_INVOKE<JsonValue>('reset_application_proxy_totals'),
+  listApplicationProxyProcesses: () =>
+    __TAURI_INVOKE<JsonValue>('list_application_proxy_processes'),
   saveProxyPorts: (settings: ProxyPortSettings) =>
     __TAURI_INVOKE<SaveProxyPortsOutcome>('save_proxy_ports', { settings }),
   getSysProxy: () => __TAURI_INVOKE<SystemProxy>('get_sys_proxy'),

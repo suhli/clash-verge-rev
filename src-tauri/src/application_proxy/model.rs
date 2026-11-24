@@ -1,0 +1,151 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    #[default]
+    Proxy,
+    Direct,
+    Block,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rule {
+    pub id: u32,
+    pub name: String,
+    pub pattern: String,
+    pub icon: Option<String>,
+    pub action: Action,
+    pub enabled: bool,
+    pub overlay: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Anchor {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Delay {
+    #[default]
+    Node,
+    Connection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Overlay {
+    pub global: bool,
+    pub windows: bool,
+    pub refresh_ms: u64,
+    pub font_size: u16,
+    pub foreground: u32,
+    pub background: u32,
+    pub opacity: u8,
+    pub scale_percent: u16,
+    pub anchor: Anchor,
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub global_x: i32,
+    pub global_y: i32,
+    pub delay: Delay,
+    pub hide_idle: bool,
+    pub click_through: bool,
+    pub locked: bool,
+    pub show_rates: bool,
+    pub show_totals: bool,
+    pub show_delay: bool,
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self {
+            global: false,
+            windows: false,
+            refresh_ms: 500,
+            font_size: 13,
+            foreground: 0xf3f6fa,
+            background: 0x111827,
+            opacity: 224,
+            scale_percent: 100,
+            anchor: Anchor::TopLeft,
+            offset_x: 8,
+            offset_y: 8,
+            global_x: 32,
+            global_y: 64,
+            delay: Delay::Node,
+            hide_idle: false,
+            click_through: true,
+            locked: true,
+            show_rates: true,
+            show_totals: true,
+            show_delay: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Settings {
+    pub enabled: bool,
+    pub fail_open: bool,
+    pub rules: Vec<Rule>,
+    pub overlay: Overlay,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Totals {
+    pub sent: u64,
+    pub received: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Stored {
+    pub settings: Settings,
+    pub last_id: u32,
+    pub totals: BTreeMap<u32, Totals>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleStats {
+    pub upload_rate: u64,
+    pub download_rate: u64,
+    pub upload_total: u64,
+    pub download_total: u64,
+    pub session_upload: u64,
+    pub session_download: u64,
+    pub active: u64,
+    pub failures: u64,
+    pub connection_delay: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub running: bool,
+    pub tun_conflict: bool,
+    pub system_proxy: bool,
+    pub endpoint_ready: bool,
+    pub error: Option<String>,
+    pub node: Option<String>,
+    pub node_delay: Option<u16>,
+    pub rules: BTreeMap<u32, RuleStats>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct View {
+    pub settings: Settings,
+    pub stats: Snapshot,
+}

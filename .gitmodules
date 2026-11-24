@@ -1,0 +1,4 @@
+[submodule "third-party/ProxyBridge"]
+	path = third-party/ProxyBridge
+	url = git@github.com:suhli/ProxyBridge.git
+	branch = verge-integration

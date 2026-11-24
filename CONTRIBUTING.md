@@ -121,9 +121,50 @@ pnpm clean
 
 ### Portable Version (Windows Only)
 
+The ProxyBridge Portable build requires PowerShell 7, CMake, Visual Studio 2022
+with the Desktop development with C++ workload, and this workspace's Rust and
+pnpm versions. Use the initialized ProxyBridge submodule at the recorded commit.
+
 ```bash
+git submodule update --init --recursive
+pnpm install --frozen-lockfile
 pnpm portable
 ```
+
+The default output is `target/portable/Clash-Verge-x86_64-pc-windows-msvc/`.
+Run `clash-verge.exe` from that directory with its adjacent resources and
+sidecars. The build uses `tauri build --no-bundle` and the installed WebView2
+Runtime. Use `pnpm portable -CoreOnly` to build the native DLL incrementally.
+The build script uses the official WinDivert 2.2.2 SDK and checks its SHA-256.
+
+In Clash Verge, turn off System Proxy and TUN, select Global mode and a proxy
+node, then add executables on the Application Proxy page. Enable Application
+Proxy and accept the Windows elevation prompt for the helper. Keep an unmatched
+application open and confirm that its connections use the native network while
+the selected application's connections appear in Mihomo. Try an enabled BLOCK
+rule, then reorder or edit the rules and open new connections to check priority.
+Existing TCP relays and cached UDP flows retain their prior routing decision
+until they close or expire. A local SOCKS5 port or credential change restarts
+capture and drops active relays. Node changes keep capture running.
+
+Enable Global traffic OSD and Application window OSD independently. Enable the
+per-rule OSD on a selected application. Transfer data, move its window between
+displays, cover it with another app, and minimize and restore it. Verify the
+global panel and window overlay update independently while Clash Verge is in
+the tray. Use a matched app with active traffic to compare rate, session and
+persisted totals. The node value comes from Mihomo's existing proxy history
+when a Global selection can be resolved. The other value measures TCP proxy
+connection setup, including SOCKS5 negotiation.
+
+The elevated helper runs on demand and exits when the control pipe disconnects.
+An unavailable local endpoint blocks newly matched proxy connections by
+default while unmatched applications stay direct. The fail-open setting permits
+new matched connections to go direct when the health check detects an outage.
+If the helper or WinDivert stops, Windows can resume native routing while the
+capture handle is absent. Ambiguous UDP replies on a shared SOCKS5 association
+are dropped. Windows protected windows and exclusive fullscreen are outside
+the OSD scope. Applications whose separate network executables use different
+image names can list those executables in the same semicolon-separated rule.
 
 ## Contributing Your Changes
 
