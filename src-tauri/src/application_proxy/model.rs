@@ -10,6 +10,10 @@ pub enum Action {
     Block,
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rule {
@@ -19,6 +23,7 @@ pub struct Rule {
     pub icon: Option<String>,
     pub action: Action,
     pub enabled: bool,
+    #[serde(default = "default_true")]
     pub overlay: bool,
 }
 
@@ -26,6 +31,8 @@ pub struct Rule {
 #[serde(rename_all = "camelCase")]
 pub enum Anchor {
     #[default]
+    OutsideTopLeft,
+    OutsideTopRight,
     TopLeft,
     TopRight,
     BottomLeft,
@@ -76,9 +83,9 @@ impl Default for Overlay {
             background: 0x18181b,
             opacity: 224,
             scale_percent: 100,
-            anchor: Anchor::TopLeft,
-            offset_x: 8,
-            offset_y: 8,
+            anchor: Anchor::OutsideTopLeft,
+            offset_x: 0,
+            offset_y: 4,
             global_x: 32,
             global_y: 64,
             delay: Delay::Node,

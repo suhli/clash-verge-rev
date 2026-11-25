@@ -484,7 +484,23 @@ pub(crate) async fn toggle_tray(switch: TraySwitch) -> Result<()> {
             }
         }
         TraySwitch::GlobalOverlay => stored.settings.overlay.global = !stored.settings.overlay.global,
-        TraySwitch::WindowOverlay => stored.settings.overlay.windows = !stored.settings.overlay.windows,
+        TraySwitch::WindowOverlay => {
+            let next = !stored.settings.overlay.windows;
+            stored.settings.overlay.windows = next;
+            if next
+                && !stored
+                    .settings
+                    .rules
+                    .iter()
+                    .any(|rule| rule.enabled && rule.action == Action::Proxy && rule.overlay)
+            {
+                for rule in &mut stored.settings.rules {
+                    if rule.enabled && rule.action == Action::Proxy {
+                        rule.overlay = true;
+                    }
+                }
+            }
+        }
     }
     save(&stored).await?;
     state.stored = stored;

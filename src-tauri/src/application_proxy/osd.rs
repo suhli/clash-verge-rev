@@ -64,11 +64,12 @@ use windows_sys::Win32::{
             GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HTCAPTION,
             HTTRANSPARENT, HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_SIZEALL, IsIconic, IsWindow,
             IsWindowVisible, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, OBJID_WINDOW, PostMessageW, RegisterClassW,
-            SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
-            SWP_SHOWWINDOW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW,
-            TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
-            WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_TIMER, WNDCLASSW,
-            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+            SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+            SystemParametersInfoW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT,
+            WINEVENT_SKIPOWNPROCESS, WM_APP, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_MOUSEACTIVATE,
+            WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
         },
     },
 };
@@ -93,6 +94,7 @@ static FRAME: Mutex<Option<(Settings, Snapshot)>> = Mutex::new(None);
 static CTRL_HWND: AtomicIsize = AtomicIsize::new(0);
 static QUEUED: AtomicBool = AtomicBool::new(false);
 static WINDOWS_DIRTY: AtomicBool = AtomicBool::new(true);
+static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
 static DRAGGING_GLOBAL: AtomicBool = AtomicBool::new(false);
 static STARTED: OnceLock<()> = OnceLock::new();
 
@@ -145,10 +147,14 @@ unsafe extern "system" fn win_event_callback(
     if hwnd.is_null() {
         return;
     }
-    let relevant = matches!(
-        event,
-        EVENT_SYSTEM_FOREGROUND | EVENT_SYSTEM_MINIMIZESTART | EVENT_SYSTEM_MINIMIZEEND
-    ) || (event == EVENT_OBJECT_LOCATIONCHANGE && object == OBJID_WINDOW && child == 0);
+    if event == EVENT_SYSTEM_FOREGROUND {
+        FOREGROUND_DIRTY.store(true, Ordering::Release);
+        WINDOWS_DIRTY.store(true, Ordering::Release);
+        wake();
+        return;
+    }
+    let relevant = matches!(event, EVENT_SYSTEM_MINIMIZESTART | EVENT_SYSTEM_MINIMIZEEND)
+        || (event == EVENT_OBJECT_LOCATIONCHANGE && object == OBJID_WINDOW && child == 0);
     if relevant {
         WINDOWS_DIRTY.store(true, Ordering::Release);
         wake();
@@ -707,6 +713,7 @@ struct Window {
     surface: Surface,
     last_scene: Option<Scene>,
     global: bool,
+    topmost: bool,
     width: i32,
     height: i32,
     visible: bool,
@@ -716,7 +723,10 @@ struct Window {
 impl Window {
     fn new(global: bool) -> Option<Self> {
         unsafe {
-            let ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
+            let mut ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+            if global {
+                ex_style |= WS_EX_TOPMOST;
+            }
             let hwnd = CreateWindowExW(
                 ex_style,
                 OSD_CLASS.as_ptr(),
@@ -746,6 +756,7 @@ impl Window {
                 surface: Surface::new(),
                 last_scene: None,
                 global,
+                topmost: global,
                 width: 0,
                 height: 0,
                 visible: false,
