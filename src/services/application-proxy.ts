@@ -9,10 +9,15 @@ import {
 import { mutate } from './mutate'
 
 export type ApplicationAction = 'proxy' | 'direct' | 'block'
+export type ApplicationProtocol = 'both' | 'tcp' | 'udp'
 export type ApplicationRule = {
   id: number
   name: string
   pattern: string
+  targetHosts: string
+  targetPorts: string
+  targetDomains: string
+  protocol: ApplicationProtocol
   icon: string | null
   action: ApplicationAction
   enabled: boolean

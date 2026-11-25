@@ -10,8 +10,21 @@ pub enum Action {
     Block,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[default]
+    Both,
+    Tcp,
+    Udp,
+}
+
 const fn default_true() -> bool {
     true
+}
+
+fn default_wildcard() -> String {
+    "*".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -20,6 +33,14 @@ pub struct Rule {
     pub id: u32,
     pub name: String,
     pub pattern: String,
+    #[serde(default = "default_wildcard")]
+    pub target_hosts: String,
+    #[serde(default = "default_wildcard")]
+    pub target_ports: String,
+    #[serde(default = "default_wildcard")]
+    pub target_domains: String,
+    #[serde(default)]
+    pub protocol: Protocol,
     pub icon: Option<String>,
     pub action: Action,
     pub enabled: bool,

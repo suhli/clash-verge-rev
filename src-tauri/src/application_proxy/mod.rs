@@ -381,9 +381,22 @@ impl Controller {
     }
 }
 
+fn normalize_filter(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    ensure!(
+        trimmed.len() < 65536 && !trimmed.contains('\0'),
+        "Invalid application rule filter"
+    );
+    Ok(if trimmed.is_empty() {
+        "*".into()
+    } else {
+        trimmed.to_owned()
+    })
+}
+
 fn validate(settings: &mut Settings, last_id: &mut u32) -> Result<()> {
     let mut ids = BTreeSet::new();
-    let mut seen_patterns = BTreeSet::new();
+    let mut seen_keys = BTreeSet::new();
     let mut unique = Vec::with_capacity(settings.rules.len());
     for mut rule in std::mem::take(&mut settings.rules) {
         rule.pattern = rule.pattern.trim().replace('/', "\\");
@@ -391,11 +404,21 @@ fn validate(settings: &mut Settings, last_id: &mut u32) -> Result<()> {
             !rule.pattern.is_empty() && rule.pattern.len() < 24576 && !rule.pattern.contains('\0'),
             "Invalid executable match"
         );
+        rule.target_hosts = normalize_filter(&rule.target_hosts)?;
+        rule.target_ports = normalize_filter(&rule.target_ports)?;
+        rule.target_domains = normalize_filter(&rule.target_domains)?;
         ensure!(
             !rule.name.trim().is_empty() && rule.name.len() <= 256,
             "Invalid application display name"
         );
-        if !seen_patterns.insert(rule.pattern.to_lowercase()) {
+        let dedup_key = (
+            rule.pattern.to_lowercase(),
+            rule.target_hosts.to_lowercase(),
+            rule.target_ports.to_lowercase(),
+            rule.target_domains.to_lowercase(),
+            rule.protocol,
+        );
+        if !seen_keys.insert(dedup_key) {
             continue;
         }
         if rule.id == 0 {
@@ -587,7 +610,7 @@ pub fn start_monitor() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::Rule;
+    use model::{Protocol, Rule};
 
     #[test]
     fn validate_deduplicates_normalized_executable_patterns_silently() {
@@ -597,6 +620,10 @@ mod tests {
                     id: 1,
                     name: "App".into(),
                     pattern: r"C:\Tools\App.exe".into(),
+                    target_hosts: "*".into(),
+                    target_ports: "*".into(),
+                    target_domains: "*".into(),
+                    protocol: Protocol::Both,
                     icon: None,
                     action: Action::Proxy,
                     enabled: true,
@@ -606,6 +633,10 @@ mod tests {
                     id: 0,
                     name: "App duplicate".into(),
                     pattern: "  c:/tools/app.exe  ".into(),
+                    target_hosts: " ".into(),
+                    target_ports: String::new(),
+                    target_domains: "*".into(),
+                    protocol: Protocol::Both,
                     icon: None,
                     action: Action::Proxy,
                     enabled: true,
@@ -613,10 +644,14 @@ mod tests {
                 },
                 Rule {
                     id: 0,
-                    name: "Other".into(),
-                    pattern: r"C:\Tools\Other.exe".into(),
+                    name: "App custom port".into(),
+                    pattern: r"C:\Tools\App.exe".into(),
+                    target_hosts: "*".into(),
+                    target_ports: "443".into(),
+                    target_domains: "*".into(),
+                    protocol: Protocol::Tcp,
                     icon: None,
-                    action: Action::Proxy,
+                    action: Action::Direct,
                     enabled: true,
                     overlay: true,
                 },
@@ -629,7 +664,8 @@ mod tests {
         assert_eq!(settings.rules[0].id, 1);
         assert_eq!(settings.rules[0].pattern, r"C:\Tools\App.exe");
         assert_eq!(settings.rules[1].id, 2);
-        assert_eq!(settings.rules[1].pattern, r"C:\Tools\Other.exe");
+        assert_eq!(settings.rules[1].target_ports, "443");
+        assert_eq!(settings.rules[1].protocol, Protocol::Tcp);
         assert_eq!(last_id, 2);
     }
 }

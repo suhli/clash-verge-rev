@@ -1,4 +1,4 @@
-use super::model::{Action, Rule};
+use super::model::{Action, Protocol, Rule};
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -36,6 +36,10 @@ pub struct Plan {
 pub struct EngineRule {
     id: u32,
     pattern: String,
+    target_hosts: String,
+    target_ports: String,
+    target_domains: String,
+    protocol: Protocol,
     action: Action,
     enabled: bool,
 }
@@ -45,6 +49,10 @@ impl From<&Rule> for EngineRule {
         Self {
             id: rule.id,
             pattern: rule.pattern.clone(),
+            target_hosts: rule.target_hosts.clone(),
+            target_ports: rule.target_ports.clone(),
+            target_domains: rule.target_domains.clone(),
+            protocol: rule.protocol,
             action: rule.action,
             enabled: rule.enabled,
         }
@@ -56,6 +64,10 @@ struct ApplicationRule {
     id: u32,
     action: i32,
     process: *const c_char,
+    target_hosts: *const c_char,
+    target_ports: *const c_char,
+    target_domains: *const c_char,
+    protocol: i32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -172,33 +184,65 @@ impl Engine {
         let password = CString::new(endpoint.password.as_bytes())?;
 
         let rules: Vec<_> = plan.rules.iter().filter(|rule| rule.enabled).collect();
-        let mut strings = Vec::with_capacity(rules.len() + 1);
-        strings.push(CString::new(
-            "verge-mihomo.exe;verge-mihomo-alpha.exe;clash-verge.exe;clash-verge-service.exe",
-        )?);
+        let wildcard = CString::new("*")?;
+        let mut strings: Vec<(CString, CString, CString, CString)> = Vec::with_capacity(rules.len() + 1);
+        strings.push((
+            CString::new("verge-mihomo.exe;verge-mihomo-alpha.exe;clash-verge.exe;clash-verge-service.exe")?,
+            wildcard.clone(),
+            wildcard.clone(),
+            wildcard,
+        ));
         for rule in &rules {
             ensure!(
                 (1..=65535).contains(&rule.id) && !rule.pattern.is_empty(),
                 "Invalid application rule"
             );
             ensure!(rule.pattern.len() < 24576, "Application match is too long");
-            strings.push(CString::new(rule.pattern.as_bytes())?);
+            ensure!(
+                rule.target_hosts.len() < 65536
+                    && rule.target_ports.len() < 65536
+                    && rule.target_domains.len() < 65536,
+                "Application rule filter is too long"
+            );
+            strings.push((
+                CString::new(rule.pattern.as_bytes())?,
+                CString::new(rule.target_hosts.as_bytes())?,
+                CString::new(rule.target_ports.as_bytes())?,
+                CString::new(rule.target_domains.as_bytes())?,
+            ));
         }
         let wire: Vec<_> = std::iter::once(ApplicationRule {
             id: 0,
             action: 1,
-            process: strings[0].as_ptr(),
+            process: strings[0].0.as_ptr(),
+            target_hosts: strings[0].1.as_ptr(),
+            target_ports: strings[0].2.as_ptr(),
+            target_domains: strings[0].3.as_ptr(),
+            protocol: 2,
         })
-        .chain(rules.iter().zip(&strings[1..]).map(|(rule, pattern)| ApplicationRule {
-            id: rule.id,
-            action: match rule.action {
-                Action::Proxy if plan.ready => 0,
-                Action::Proxy if plan.fail_open => 1,
-                Action::Proxy | Action::Block => 2,
-                Action::Direct => 1,
-            },
-            process: pattern.as_ptr(),
-        }))
+        .chain(
+            rules
+                .iter()
+                .zip(&strings[1..])
+                .map(|(rule, (pattern, hosts, ports, domains))| ApplicationRule {
+                    id: rule.id,
+                    action: match rule.action {
+                        Action::Proxy if plan.ready => 0,
+                        Action::Proxy if plan.fail_open => 1,
+                        Action::Proxy | Action::Block => 2,
+                        Action::Direct => 1,
+                    },
+                    process: pattern.as_ptr(),
+                    target_hosts: hosts.as_ptr(),
+                    target_ports: ports.as_ptr(),
+                    target_domains: domains.as_ptr(),
+                    protocol: match rule.protocol {
+                        Protocol::Tcp => 0,
+                        Protocol::Udp => 1,
+                        Protocol::Both => 2,
+                    },
+                }),
+        )
         .collect();
 
         if self.endpoint.as_ref() != Some(&endpoint) {

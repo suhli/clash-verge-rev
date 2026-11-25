@@ -237,21 +237,28 @@ export interface TranslationResources {
         pattern: string
         preview: string
         processes: string
+        protocol: string
+        proxySettings: string
         refresh: string
         refreshRate: string
         remove: string
         resetTotals: string
         retry: string
+        rulesTitle: string
         running: string
         save: string
         scalePercent: string
         search: string
         sendDomainToProxy: string
+        settingsTitle: string
         showDelay: string
         showRates: string
         showTotals: string
         stopped: string
         systemProxy: string
+        targetDomains: string
+        targetHosts: string
+        targetPorts: string
         title: string
         topCenter: string
         topLeft: string
