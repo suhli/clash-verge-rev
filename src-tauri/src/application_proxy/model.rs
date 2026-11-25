@@ -105,13 +105,27 @@ impl Default for Overlay {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub enabled: bool,
     pub fail_open: bool,
+    #[serde(default = "default_true")]
+    pub send_domain_to_proxy: bool,
     pub rules: Vec<Rule>,
     pub overlay: Overlay,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            fail_open: false,
+            send_domain_to_proxy: true,
+            rules: Vec::new(),
+            overlay: Overlay::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

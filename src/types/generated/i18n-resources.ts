@@ -246,6 +246,7 @@ export interface TranslationResources {
         save: string
         scalePercent: string
         search: string
+        sendDomainToProxy: string
         showDelay: string
         showRates: string
         showTotals: string

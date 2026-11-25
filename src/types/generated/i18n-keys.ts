@@ -142,6 +142,7 @@ export const translationKeys = [
   'layout.applicationProxy.globalOverlay',
   'layout.applicationProxy.windowOverlay',
   'layout.applicationProxy.failOpen',
+  'layout.applicationProxy.sendDomainToProxy',
   'layout.applicationProxy.clickThrough',
   'layout.applicationProxy.locked',
   'layout.applicationProxy.hideIdle',

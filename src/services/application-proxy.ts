@@ -55,6 +55,7 @@ export type ApplicationOverlay = {
 export type ApplicationSettings = {
   enabled: boolean
   failOpen: boolean
+  sendDomainToProxy: boolean
   rules: ApplicationRule[]
   overlay: ApplicationOverlay
 }

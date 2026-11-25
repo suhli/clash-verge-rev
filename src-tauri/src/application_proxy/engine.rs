@@ -20,6 +20,7 @@ pub struct Endpoint {
     pub port: u16,
     pub user: String,
     pub password: String,
+    pub send_domain_to_proxy: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,8 +204,10 @@ impl Engine {
         if self.endpoint.as_ref() != Some(&endpoint) {
             self.stop()?;
             let host = c"127.0.0.1".as_ptr();
+            let send_domain = i32::from(endpoint.send_domain_to_proxy);
             if self.proxy_id == 0 {
-                self.proxy_id = unsafe { (api.add_proxy)(1, host, endpoint.port, user.as_ptr(), password.as_ptr(), 0) };
+                self.proxy_id =
+                    unsafe { (api.add_proxy)(1, host, endpoint.port, user.as_ptr(), password.as_ptr(), send_domain) };
                 ensure!(self.proxy_id != 0, "Core rejected the local SOCKS5 endpoint");
             } else {
                 ensure!(
@@ -216,7 +219,7 @@ impl Engine {
                             endpoint.port,
                             user.as_ptr(),
                             password.as_ptr(),
-                            0,
+                            send_domain,
                         )
                     } != 0,
                     "Core could not update the local SOCKS5 endpoint"

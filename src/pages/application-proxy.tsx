@@ -1422,6 +1422,26 @@ export default function ApplicationProxyPage() {
                   }
                 />
               </Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  py: 0.5,
+                }}
+              >
+                <Typography variant="body2">
+                  {t('layout.applicationProxy.sendDomainToProxy')}
+                </Typography>
+                <Switch
+                  edge="end"
+                  checked={settings.sendDomainToProxy}
+                  disabled={saving}
+                  onChange={(_, sendDomainToProxy) =>
+                    void save({ ...settings, sendDomainToProxy })
+                  }
+                />
+              </Box>
               {BEHAVIOR_SWITCHES.map((key) => (
                 <Box
                   key={key}

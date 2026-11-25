@@ -114,7 +114,7 @@ pub(crate) async fn tun_conflict() -> bool {
         .is_some_and(|state| state.stored.settings.enabled)
 }
 
-async fn endpoint_and_mode() -> (Option<Endpoint>, Vec<u16>, bool) {
+async fn endpoint_and_mode(send_domain_to_proxy: bool) -> (Option<Endpoint>, Vec<u16>, bool) {
     let runtime = Config::runtime().await.data_arc();
     let config = runtime.config.as_ref();
     let global = config
@@ -153,6 +153,7 @@ async fn endpoint_and_mode() -> (Option<Endpoint>, Vec<u16>, bool) {
             port,
             user: user.into(),
             password: password.into(),
+            send_domain_to_proxy,
         }
     });
     (endpoint, bypass_ports, global)
@@ -323,7 +324,7 @@ impl Controller {
             self.helper = Some(Helper::start().await?);
         }
         let Some(helper) = &mut self.helper else { return Ok(()) };
-        let (endpoint, bypass_ports, global) = endpoint_and_mode().await;
+        let (endpoint, bypass_ports, global) = endpoint_and_mode(self.stored.settings.send_domain_to_proxy).await;
         if self
             .probe
             .as_ref()

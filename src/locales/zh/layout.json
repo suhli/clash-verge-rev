@@ -30,6 +30,7 @@
     "globalOverlay": "全局流量 OSD",
     "windowOverlay": "应用窗口 OSD",
     "failOpen": "Mihomo 不可用时改为直连",
+    "sendDomainToProxy": "向 Mihomo 发送域名（规则模式）",
     "clickThrough": "鼠标穿透",
     "locked": "锁定全局 OSD 位置",
     "hideIdle": "隐藏无流量应用",

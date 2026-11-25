@@ -30,6 +30,7 @@
     "globalOverlay": "Global traffic OSD",
     "windowOverlay": "Application window OSD",
     "failOpen": "Use direct connections if Mihomo is unavailable",
+    "sendDomainToProxy": "Mihomo에 도메인 이름 전송 (규칙 모드)",
     "clickThrough": "Click-through",
     "locked": "Lock global OSD position",
     "hideIdle": "Hide idle applications",
