@@ -40,8 +40,35 @@ if (-not (Test-Path -LiteralPath "$sdk/include/windivert.h") -or
     Expand-Archive -LiteralPath $archive -DestinationPath $cache -Force
 }
 
-cmake -S (Join-Path $source 'Windows') -B $coreBuild -G 'Visual Studio 17 2022' -A $platform "-DWINDIVERT_ROOT=$sdk"
-cmake --build $coreBuild --config Release --target ProxyBridgeCore --parallel
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+$generator = $null
+$vsPath = $null
+if (Test-Path -LiteralPath $vswhere) {
+    $vsVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion 2>$null | Select-Object -First 1)
+    $vsPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1)
+    if ($vsVersion -match '^(\d+)\.') {
+        $major = $Matches[1]
+        $matched = (cmake --help | Select-String -Pattern "Visual Studio $major \d{4}" | Select-Object -First 1)
+        if ($matched) {
+            $generator = $matched.Matches[0].Value
+        }
+    }
+}
+
+if ($generator) {
+    Write-Output "Configuring ProxyBridgeCore with CMake generator: $generator ($platform)"
+    cmake -S (Join-Path $source 'Windows') -B $coreBuild -G $generator -A $platform "-DWINDIVERT_ROOT=$sdk"
+    cmake --build $coreBuild --config Release --target ProxyBridgeCore --parallel
+} elseif ($vsPath -and (Test-Path -LiteralPath (Join-Path $vsPath 'VC/Auxiliary/Build/vcvarsall.bat'))) {
+    $vcvars = Join-Path $vsPath 'VC/Auxiliary/Build/vcvarsall.bat'
+    $vcvarsArch = if ($x64) { 'x64' } else { 'x86' }
+    $srcWin = Join-Path $source 'Windows'
+    Write-Output "Configuring ProxyBridgeCore with Ninja Multi-Config via $vcvars ($vcvarsArch)"
+    cmd.exe /d /s /c "`"`"$vcvars`" $vcvarsArch && cmake -S `"$srcWin`" -B `"$coreBuild`" -G `"Ninja Multi-Config`" -DWINDIVERT_ROOT=`"$sdk`" && cmake --build `"$coreBuild`" --config Release --target ProxyBridgeCore --parallel`""
+} else {
+    cmake -S (Join-Path $source 'Windows') -B $coreBuild -G 'Visual Studio 17 2022' -A $platform "-DWINDIVERT_ROOT=$sdk"
+    cmake --build $coreBuild --config Release --target ProxyBridgeCore --parallel
+}
 if ($CoreOnly) {
     Write-Output (Join-Path $coreBuild 'Release/ProxyBridgeCore.dll')
     return

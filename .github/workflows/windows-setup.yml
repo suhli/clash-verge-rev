@@ -80,6 +80,8 @@ jobs:
 
       - name: Build ProxyBridge core and stage runtime files
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pwsh -NoProfile -File scripts/portable.ps1 -Target x86_64-pc-windows-msvc -CoreOnly
           $dest = Join-Path $PWD 'src-tauri/resources/proxybridge'
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
