@@ -445,6 +445,7 @@ pub async fn save_settings(settings: Value) -> Result<Value> {
             state.attempted = false;
         }
         state.stored = stored;
+        osd::publish(&state.stored.settings, &state.snapshot);
     }
     start_monitor();
     let _ = crate::core::tray::Tray::global().update_menu().await;
@@ -487,6 +488,7 @@ pub(crate) async fn toggle_tray(switch: TraySwitch) -> Result<()> {
     }
     save(&stored).await?;
     state.stored = stored;
+    osd::publish(&state.stored.settings, &state.snapshot);
     start_monitor();
     Ok(())
 }

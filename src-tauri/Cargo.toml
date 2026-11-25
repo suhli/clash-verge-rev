@@ -25,6 +25,13 @@ chrome-trace = ["clash-verge-logging/chrome-trace"]
 clippy = ["tauri/test"]
 perf-harness = ["dep:tauri-plugin-wdio-webdriver"]
 proxybridge-bundled = [
+  "windows/Win32_Foundation",
+  "windows/Win32_Graphics_Direct2D",
+  "windows/Win32_Graphics_Direct2D_Common",
+  "windows/Win32_Graphics_DirectWrite",
+  "windows/Win32_Graphics_Dxgi_Common",
+  "windows/Win32_Graphics_Gdi",
+  "windows/Win32_System_Com",
   "windows-sys/Win32_Graphics_Dwm",
   "windows-sys/Win32_Graphics_Gdi",
   "windows-sys/Win32_System_LibraryLoader",
