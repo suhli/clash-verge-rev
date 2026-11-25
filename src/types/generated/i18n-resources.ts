@@ -226,6 +226,8 @@ export interface TranslationResources {
         offsetX: string
         offsetY: string
         opacity: string
+        outsideTopLeft: string
+        outsideTopRight: string
         overlay: string
         pattern: string
         preview: string

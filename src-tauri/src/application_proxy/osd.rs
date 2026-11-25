@@ -837,7 +837,7 @@ impl Window {
         };
 
         let moved = self.last_pos.is_none_or(|(px, py, _)| px != x || py != y);
-        if needs_redraw || moved || !self.visible {
+        if needs_redraw || !self.visible {
             if !self.surface.present(self.hwnd, x, y) {
                 logging!(warn, Type::System, "UpdateLayeredWindow failed: err={}", unsafe {
                     GetLastError()
@@ -848,9 +848,24 @@ impl Window {
         }
 
         unsafe {
+            let want_topmost = after == HWND_TOPMOST;
+            if self.topmost && !want_topmost {
+                SetWindowPos(
+                    self.hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                );
+                self.topmost = false;
+            }
+
             let need_zorder = !self.visible
+                || moved
                 || self.last_pos != Some((x, y, after))
-                || target.is_some_and(|t| after != HWND_TOPMOST && GetWindow(t, GW_HWNDPREV) != self.hwnd);
+                || target.is_some_and(|t| !want_topmost && GetWindow(t, GW_HWNDPREV) != self.hwnd);
             if !self.visible {
                 ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 self.visible = true;
@@ -866,6 +881,7 @@ impl Window {
                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                 ) != 0
             {
+                self.topmost = want_topmost;
                 self.last_pos = Some((x, y, after));
             }
         }
@@ -1466,28 +1482,71 @@ fn visible_frame_rect(hwnd: HWND) -> Option<RECT> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+const fn compute_anchor_coords(
+    anchor: Anchor,
+    frame: &RECT,
+    client_origin: POINT,
+    client_w: i32,
+    client_h: i32,
+    off_x: i32,
+    off_y: i32,
+    width: i32,
+    height: i32,
+) -> (i32, i32) {
+    match anchor {
+        Anchor::OutsideTopLeft => (frame.left + off_x, frame.top - height - off_y),
+        Anchor::OutsideTopRight => (frame.right - width - off_x, frame.top - height - off_y),
+        Anchor::TopLeft => (client_origin.x + off_x, client_origin.y + off_y),
+        Anchor::TopRight => (client_origin.x + client_w - width - off_x, client_origin.y + off_y),
+        Anchor::BottomLeft => (client_origin.x + off_x, client_origin.y + client_h - height - off_y),
+        Anchor::BottomRight => (
+            client_origin.x + client_w - width - off_x,
+            client_origin.y + client_h - height - off_y,
+        ),
+    }
+}
+
 fn compute_target_position(target: HWND, style: &Overlay, width: i32, height: i32) -> Option<(i32, i32)> {
     unsafe {
         if IsWindow(target) == 0 || IsWindowVisible(target) == 0 || IsIconic(target) != 0 {
             return None;
         }
+        let frame = visible_frame_rect(target)?;
+        if (frame.right - frame.left) < 40 || (frame.bottom - frame.top) < 24 {
+            return None;
+        }
+
         let mut area = RECT::default();
         let mut origin = POINT::default();
-        if GetClientRect(target, &mut area) == 0 || ClientToScreen(target, &mut origin) == 0 {
-            return None;
-        }
-        let client_w = area.right - area.left;
-        let client_h = area.bottom - area.top;
-        if client_w < 40 || client_h < 24 {
-            return None;
-        }
+        let (client_origin, client_w, client_h) =
+            if GetClientRect(target, &mut area) != 0 && ClientToScreen(target, &mut origin) != 0 {
+                (origin, area.right - area.left, area.bottom - area.top)
+            } else {
+                (
+                    POINT {
+                        x: frame.left,
+                        y: frame.top,
+                    },
+                    frame.right - frame.left,
+                    frame.bottom - frame.top,
+                )
+            };
+
         let dpi = GetDpiForWindow(target).max(96) as i32;
         let off_x = style.offset_x * dpi / 96;
         let off_y = style.offset_y * dpi / 96;
-        let right = matches!(style.anchor, Anchor::TopRight | Anchor::BottomRight);
-        let bottom = matches!(style.anchor, Anchor::BottomLeft | Anchor::BottomRight);
-        let mut x = origin.x + if right { client_w - width - off_x } else { off_x };
-        let mut y = origin.y + if bottom { client_h - height - off_y } else { off_y };
+        let (mut x, mut y) = compute_anchor_coords(
+            style.anchor,
+            &frame,
+            client_origin,
+            client_w,
+            client_h,
+            off_x,
+            off_y,
+            width,
+            height,
+        );
 
         let mon = MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO {
@@ -1529,6 +1588,10 @@ fn is_target_occluded(target: HWND, osd_rect: &RECT, own_pid: u32) -> bool {
         if IsIconic(target) != 0 || IsWindowVisible(target) == 0 || is_window_cloaked(target) {
             return true;
         }
+        // Active foreground window is never occluded by system topmost/shell ghost windows.
+        if GetForegroundWindow() == target {
+            return false;
+        }
         let mut cur = GetWindow(target, GW_HWNDPREV);
         let mut steps = 0u32;
         while !cur.is_null() && steps < 256 {
@@ -1536,11 +1599,11 @@ fn is_target_occluded(target: HWND, osd_rect: &RECT, own_pid: u32) -> bool {
             if IsWindowVisible(cur) != 0 && IsIconic(cur) == 0 && !is_window_cloaked(cur) {
                 let mut pid = 0;
                 GetWindowThreadProcessId(cur, &mut pid);
-                if pid != own_pid {
+                if pid != own_pid && GetWindow(cur, GW_OWNER) != target {
                     let ex = GetWindowLongPtrW(cur, GWL_EXSTYLE) as u32;
-                    let click_through_overlay =
-                        (ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT)) == (WS_EX_LAYERED | WS_EX_TRANSPARENT);
-                    if !click_through_overlay
+                    let non_occluding =
+                        (ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED)) != 0;
+                    if !non_occluding
                         && let Some(frame) = visible_frame_rect(cur)
                         && rects_intersect(&frame, osd_rect)
                     {
@@ -1718,9 +1781,10 @@ unsafe extern "system" fn ctrl_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
 
 unsafe extern "system" fn list_top_window(hwnd: HWND, arg: LPARAM) -> i32 {
     let windows = unsafe { &mut *(arg as *mut Vec<HWND>) };
+    let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
     if unsafe { IsWindowVisible(hwnd) } != 0
-        && unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW == 0
-        && unsafe { GetWindow(hwnd, GW_OWNER) }.is_null()
+        && (ex & WS_EX_TOOLWINDOW) == 0
+        && (unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() || (ex & WS_EX_APPWINDOW) != 0)
     {
         windows.push(hwnd);
     }
@@ -1859,6 +1923,14 @@ fn discover_target_windows(settings: &Settings, windows: &mut BTreeMap<usize, (W
 
     let mut candidates: Vec<HWND> = Vec::new();
     unsafe { EnumWindows(Some(list_top_window), (&mut candidates as *mut Vec<HWND>) as LPARAM) };
+    let fg = unsafe { GetForegroundWindow() };
+    if !fg.is_null()
+        && unsafe { IsWindowVisible(fg) } != 0
+        && (unsafe { GetWindowLongPtrW(fg, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW) == 0
+        && !candidates.contains(&fg)
+    {
+        candidates.push(fg);
+    }
 
     let mut seen = BTreeSet::new();
     let mut images: BTreeMap<u32, Option<(String, CString)>> = BTreeMap::new();
@@ -2044,8 +2116,10 @@ fn run() {
                 continue;
             }
 
+            let fg_changed = FOREGROUND_DIRTY.swap(false, Ordering::AcqRel);
             let dirty = WINDOWS_DIRTY.swap(false, Ordering::AcqRel);
-            if last_rules != settings.rules
+            if fg_changed
+                || last_rules != settings.rules
                 || last_discovery
                     .is_none_or(|instant| instant.elapsed() >= Duration::from_millis(if dirty { 250 } else { 2000 }))
             {
@@ -2169,5 +2243,32 @@ mod tests {
             "chrome.exe",
             r"C:\Program Files\Mozilla Firefox\firefox.exe"
         ));
+    }
+
+    #[test]
+    fn computes_outside_and_inside_anchor_coordinates() {
+        let frame = RECT {
+            left: 100,
+            top: 200,
+            right: 900,
+            bottom: 700,
+        };
+        let origin = POINT { x: 108, y: 232 };
+        assert_eq!(
+            compute_anchor_coords(Anchor::OutsideTopLeft, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (100, 172)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::OutsideTopRight, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (680, 172)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::TopLeft, &frame, origin, 784, 460, 8, 8, 220, 24),
+            (116, 240)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::BottomRight, &frame, origin, 784, 460, 8, 8, 220, 24),
+            (664, 660)
+        );
     }
 }

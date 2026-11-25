@@ -50,6 +50,8 @@
     "nodeDelay": "Selected node delay",
     "connectionDelay": "Proxy connection setup",
     "anchor": "Window anchor",
+    "outsideTopLeft": "Dış sol üst",
+    "outsideTopRight": "Dış sağ üst",
     "topLeft": "Top left",
     "topRight": "Top right",
     "bottomLeft": "Bottom left",

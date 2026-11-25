@@ -162,6 +162,8 @@ export const translationKeys = [
   'layout.applicationProxy.nodeDelay',
   'layout.applicationProxy.connectionDelay',
   'layout.applicationProxy.anchor',
+  'layout.applicationProxy.outsideTopLeft',
+  'layout.applicationProxy.outsideTopRight',
   'layout.applicationProxy.topLeft',
   'layout.applicationProxy.topRight',
   'layout.applicationProxy.bottomLeft',

@@ -27,7 +27,13 @@ export type ApplicationOverlay = {
   background: number
   opacity: number
   scalePercent: number
-  anchor: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight'
+  anchor:
+    | 'outsideTopLeft'
+    | 'outsideTopRight'
+    | 'topLeft'
+    | 'topRight'
+    | 'bottomLeft'
+    | 'bottomRight'
   offsetX: number
   offsetY: number
   globalX: number
@@ -107,9 +113,9 @@ export const overlayDefaults: ApplicationOverlay = {
   background: 0x18181b,
   opacity: 224,
   scalePercent: 100,
-  anchor: 'topLeft',
-  offsetX: 8,
-  offsetY: 8,
+  anchor: 'outsideTopLeft',
+  offsetX: 0,
+  offsetY: 4,
   globalX: 32,
   globalY: 64,
   delay: 'node',

@@ -64,7 +64,14 @@ import {
 import { showNotice } from '@/services/notice-service'
 
 const ACTIONS = ['proxy', 'direct', 'block'] as const
-const ANCHORS = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as const
+const ANCHORS = [
+  'outsideTopLeft',
+  'outsideTopRight',
+  'topLeft',
+  'topRight',
+  'bottomLeft',
+  'bottomRight',
+] as const
 const REFRESH_RATES = [250, 500, 1000, 2000] as const
 
 const BEHAVIOR_SWITCHES = ['clickThrough', 'locked', 'hideIdle'] as const
@@ -75,6 +82,23 @@ const COLOR_UL = '#A78BFA'
 const COLOR_OK = '#10B981'
 const COLOR_WARN = '#F59E0B'
 const COLOR_ERR = '#EF4444'
+
+function ensureWindowOverlayRules(
+  rules: ApplicationRule[],
+  windows: boolean,
+): ApplicationRule[] {
+  if (
+    !windows ||
+    rules.some(
+      (rule) => rule.enabled && rule.action === 'proxy' && rule.overlay,
+    )
+  ) {
+    return rules
+  }
+  return rules.map((rule) =>
+    rule.enabled && rule.action === 'proxy' ? { ...rule, overlay: true } : rule,
+  )
+}
 
 function newRule(
   name = '',
@@ -663,6 +687,10 @@ export default function ApplicationProxyPage() {
                     onChange={(_, windows) =>
                       void save({
                         ...settings,
+                        rules: ensureWindowOverlayRules(
+                          settings.rules,
+                          windows,
+                        ),
                         overlay: { ...settings.overlay, windows },
                       })
                     }
@@ -1272,7 +1300,14 @@ export default function ApplicationProxyPage() {
         onClose={() => setAppearance(undefined)}
         onOk={() => {
           if (appearance && settings) {
-            void save({ ...settings, overlay: appearance }).then((ok) => {
+            void save({
+              ...settings,
+              rules: ensureWindowOverlayRules(
+                settings.rules,
+                appearance.windows,
+              ),
+              overlay: appearance,
+            }).then((ok) => {
               if (ok) setAppearance(undefined)
             })
           }
