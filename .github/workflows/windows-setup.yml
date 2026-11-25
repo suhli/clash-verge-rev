@@ -1,0 +1,133 @@
+name: Windows Setup Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_portable:
+        description: 'Also upload Portable ZIP (reuses built binary)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+  HUSKY: 0
+
+concurrency:
+  group: '${{ github.workflow }} - ${{ github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  windows-x64-setup:
+    name: Build Windows x64 Setup
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Checkout ProxyBridge submodule
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if ($env:SUBMODULE_TOKEN) {
+            git config --local url."https://x-access-token:$($env:SUBMODULE_TOKEN)@github.com/".insteadOf "git@github.com:"
+          } else {
+            git config --local url."https://github.com/".insteadOf "git@github.com:"
+          }
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: 'v1-rust-win-setup'
+          key: 'rust-windows-x64-proxybridge'
+          workspaces: |
+            . -> target
+          cache-all-crates: true
+          cache-workspace-crates: true
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26.13.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies and run prebuild
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run prebuild x86_64-pc-windows-msvc
+
+      - name: Build ProxyBridge core and stage runtime files
+        run: |
+          pwsh -NoProfile -File scripts/portable.ps1 -Target x86_64-pc-windows-msvc -CoreOnly
+          $dest = Join-Path $PWD 'src-tauri/resources/proxybridge'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -LiteralPath 'target/portable/proxybridge-msvc-x86_64-pc-windows-msvc/Release/ProxyBridgeCore.dll' -Destination $dest -Force
+          Copy-Item -LiteralPath 'target/portable/downloads/WinDivert-2.2.2-A/x64/WinDivert.dll' -Destination $dest -Force
+          Get-ChildItem -LiteralPath 'target/portable/downloads/WinDivert-2.2.2-A/x64' -Filter 'WinDivert*.sys' -File | Copy-Item -Destination $dest -Force
+          Get-ChildItem -LiteralPath $dest | Format-Table Name, Length
+
+      - name: Build Windows x64 NSIS setup
+        env:
+          NODE_OPTIONS: '--max_old_space_size=4096'
+          VITE_PROXYBRIDGE_BUNDLED: '1'
+        run: |
+          New-Item -ItemType Directory -Force -Path target | Out-Null
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -LiteralPath 'target/tauri-windows-setup.json' -Encoding utf8NoBOM
+          pnpm tauri build --target x86_64-pc-windows-msvc -b nsis --features proxybridge-bundled --config target/tauri-windows-setup.json -- --locked
+
+      - name: Upload Windows Setup artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: clash-verge-windows-x64-setup
+          archive: false
+          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      - name: Package Portable ZIP (optional)
+        if: ${{ inputs.include_portable }}
+        run: |
+          $stage = Join-Path $PWD 'target/portable-artifact/Clash-Verge-x86_64-pc-windows-msvc'
+          $resources = Join-Path $stage 'resources'
+          $licenses = Join-Path $stage 'licenses'
+          if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $resources, $licenses | Out-Null
+          Copy-Item -LiteralPath 'target/x86_64-pc-windows-msvc/release/clash-verge.exe' -Destination $stage -Force
+          foreach ($name in @('verge-mihomo', 'verge-mihomo-alpha')) {
+            Copy-Item -LiteralPath "src-tauri/sidecar/$name-x86_64-pc-windows-msvc.exe" -Destination "$stage/$name.exe" -Force
+          }
+          Copy-Item -Path 'src-tauri/resources/*' -Destination $resources -Recurse -Force
+          Copy-Item -LiteralPath 'LICENSE' -Destination "$licenses/Clash-Verge-Rev.txt" -Force
+          Copy-Item -LiteralPath 'third-party/ProxyBridge/LICENSE' -Destination "$licenses/ProxyBridge.txt" -Force
+          Copy-Item -LiteralPath 'target/portable/downloads/WinDivert-2.2.2-A/LICENSE' -Destination "$licenses/WinDivert.txt" -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath 'target/clash-verge-windows-x64-portable.zip' -Force
+
+      - name: Upload Portable ZIP artifact (optional)
+        if: ${{ inputs.include_portable }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: clash-verge-windows-x64-portable
+          archive: false
+          path: target/clash-verge-windows-x64-portable.zip
+          if-no-files-found: error
