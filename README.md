@@ -48,33 +48,29 @@ Supports Windows (x64/x86), Linux (x64/arm64) and macOS 11+ (intel/apple).
 
 ---
 
-## Promotion
+## Updates（本分支更新内容）
 
-### ✈️ [AI云边 -- 全新架构机场 ClaudeBorder](https://cruise.54678999.xyz/#/register?code=58q5UJZc)
+本分支基于上游 Clash Verge Rev，新增并完善了 **Windows 分应用透明代理（Application Proxy）** 与 **原生实时流量 OSD**：
 
-🔥热销中使用本链接注册即送 **3 天免费试用**，每日 **1GB 流量**：👉 [点此注册](https://cruise.54678999.xyz/#/register?code=58q5UJZc)
+### 1. 分应用透明代理（ProxyBridge + WinDivert）
+- **独立运行模式**：独立于 Windows 系统代理和 TUN（与 TUN 互斥），无需修改系统路由表、全局 DNS 或 Mihomo 内核，主界面保持普通权限运行，仅 WinDivert 捕获核心运行在受控的提权 Helper 进程中。
+- **TCP & UDP（IPv4 / IPv6）全协议代理**：将匹配应用的流量通过本地 SOCKS5 中继转发至 Mihomo 的 `socks-port` / `mixed-port`，完全遵循 Clash 当前的规则 / 全局 / 直连模式。
+- **完整规则可配置（参考 ProxyBridge）**：
+  - 支持从「运行中的进程」、本地「选择 EXE」或「手动添加」创建规则，支持纯进程名（如 `xxx.exe`）、完整路径、通配符及分号多进程匹配，重复规则自动静默去重。
+  - 每条规则均支持配置 **目标主机**、**目标端口**、**目标域名**（默认 `*`）、**协议（`BOTH` / `TCP` / `UDP`）** 与 **动作（`PROXY` / `DIRECT` / `BLOCK`）**。
+- **代理核心增强与网络防护**：
+  - 支持配置化 **「向 Mihomo 发送域名（规则模式）」**（默认开启），通过 DNS 嗅探将域名经 SOCKS5 `ATYP_DOMAIN` 传给 Mihomo；支持「Mihomo 不可用时改为直连（Fail-Open）」。
+  - 自动直连放行环回地址（`127.0.0.0/8`、`::1`）、本机网卡 IPv4/IPv6 访问 Mihomo 本地监听端口（`mixed-port` / `socks-port` / `port` 等）以及局域网私网 DNS（RFC1918 UDP 53），避免代理回环与私网 DNS 超时。
+  - 提权 Helper 启动时自动维护 Windows 防火墙入站放行规则，确保专用/公用网络下本地中继稳定通信。
 
-#### AI云边 -- 全新架构机场。
+### 2. 原生 Win32 + Direct2D / DirectWrite 实时流量 OSD
+- **双模式独立开关**：支持 **全局流量 OSD** 与 **应用窗口伴随 OSD**（可分别通过界面或托盘菜单切换，最小化到托盘后持续工作）。
+- **无干扰体验**：原生 Direct2D/DirectWrite 渲染，支持鼠标穿透、不抢占窗口焦点、窗口最小化/切屏即时隐藏、进程树子进程流量聚合以及 0ms 窗口跟随。
+- **12 锚点与高度自定义**：支持 **应用外**（左上/中上/右上/左下/中下/右下）与 **应用内**（左上/中上/右上/左下/中下/右下）共 12 个锚点，并可在「应用代理设置」中实时预览和调整字号、缩放、不透明度、配色、刷新频率、延迟指标与位置偏移。
 
-- 💻 多次**技术迭代后**全新亮相。
-- 🗺 全**高速稳定**正价节点。
-- 🌏 **海外团队**，不跑路
-- 🚀 线路**冗余**设计，**自动化运维**对抗各类封锁
-- 👨‍🦲 团队架构师为**大厂**网络架构师
-- 💰 极致**稳定**，亲民价**价格**
-- 🌐 全面支持**流媒体及各AI访问**
-- 🙋 7*12小时真人客服。解决您的各类问题。
-
-🌐 官网：👉 [https://www.claudeborder.com](https://cruise.54678999.xyz/#/register?code=58q5UJZc)
-
-### 🤖 [GPTKefu —— 与 Crisp 深度整合的 AI 智能客服平台](https://gptkefu.com)
-
-- 🧠 深度理解完整对话上下文 + 图片识别，自动给出专业、精准的回复，告别机械式客服。
-- ♾️ **不限回答数量**，无额度焦虑，区别于其他按条计费的 AI 客服产品。
-- 💬 售前咨询、售后服务、复杂问题解答，全场景轻松覆盖，真实用户案例已验证效果。
-- ⚡ 3 分钟极速接入，零门槛上手，即刻提升客服效率与客户满意度。
-- 🎁 高级套餐免费试用 14 天，先体验后付费：👉 [立即试用](https://gptkefu.com)
-- 📢 智能客服TG 频道：[@crisp_ai](https://t.me/crisp_ai)
+### 3. Windows 构建工作流
+- 本地便携版构建：`pwsh -NoProfile -File scripts/portable.ps1`（自动拉取并校验 WinDivert 2.2.2、自动检测本机 Visual Studio 版本编译 `ProxyBridgeCore.dll`）。
+- GitHub Actions 手动构建：[.github/workflows/windows-setup.yml](./.github/workflows/windows-setup.yml) 支持免 tag 手动触发，自动拉取 `third-party/ProxyBridge` 子模块并产出带应用代理功能的 Windows x64 NSIS 安装包（及可选便携版 ZIP）上传至 Artifacts。
 
 ---
 
@@ -118,10 +114,14 @@ or `pnpm dev:sidecar` to force the unprivileged Sidecar workflow.
 
 Issue and PR welcome!
 
-## Acknowledgement
+## References & Acknowledgement
 
-Clash Verge rev was based on or inspired by these projects and so on:
+This fork and Clash Verge Rev are based on or inspired by the following projects:
 
+- [clash-verge-rev/clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev): Upstream Clash Verge Rev project.
+- [InterceptSuite/ProxyBridge](https://github.com/InterceptSuite/ProxyBridge): Lightweight open-source universal transparent proxy client (TCP/UDP per-application routing core and OSD reference).
+- [suhli/ProxyBridge](https://github.com/suhli/ProxyBridge): Integrated ProxyBridge submodule fork (`verge-integration` branch) used for Windows application proxy.
+- [basil00/WinDivert](https://github.com/basil00/WinDivert): Windows Packet Divert driver (`v2.2.2`) used for user-mode packet capture and redirection.
 - [zzzgydi/clash-verge](https://github.com/zzzgydi/clash-verge): A Clash GUI based on tauri. Supports Windows, macOS and Linux.
 - [tauri-apps/tauri](https://github.com/tauri-apps/tauri): Build smaller, faster, and more secure desktop applications with a web frontend.
 - [Dreamacro/clash](https://github.com/Dreamacro/clash): A rule-based tunnel in Go.
