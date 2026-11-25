@@ -59,14 +59,14 @@ use windows_sys::Win32::{
         HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetThreadDpiAwarenessContext},
         WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EVENT_OBJECT_LOCATIONCHANGE,
-            EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, EnumChildWindows, EnumWindows,
-            GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWLP_USERDATA, GetClientRect, GetForegroundWindow, GetMessageW,
-            GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HTCAPTION,
-            HTTRANSPARENT, HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_SIZEALL, IsIconic, IsWindow,
-            IsWindowVisible, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, OBJID_WINDOW, PostMessageW, RegisterClassW,
-            SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-            SystemParametersInfoW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT,
+            EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, EnumChildWindows,
+            EnumWindows, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWLP_USERDATA, GetClientRect, GetForegroundWindow,
+            GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+            HTCAPTION, HTTRANSPARENT, HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_SIZEALL, IsIconic,
+            IsWindow, IsWindowVisible, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, OBJID_WINDOW, PostMessageW,
+            RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer, SetWindowLongPtrW, SetWindowPos,
+            ShowWindow, SystemParametersInfoW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT,
             WINEVENT_SKIPOWNPROCESS, WM_APP, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_MOUSEACTIVATE,
             WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
@@ -1538,8 +1538,8 @@ fn is_target_occluded(target: HWND, osd_rect: &RECT, own_pid: u32) -> bool {
                 GetWindowThreadProcessId(cur, &mut pid);
                 if pid != own_pid {
                     let ex = GetWindowLongPtrW(cur, GWL_EXSTYLE) as u32;
-                    let click_through_overlay = (ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT))
-                        == (WS_EX_LAYERED | WS_EX_TRANSPARENT);
+                    let click_through_overlay =
+                        (ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT)) == (WS_EX_LAYERED | WS_EX_TRANSPARENT);
                     if !click_through_overlay
                         && let Some(frame) = visible_frame_rect(cur)
                         && rects_intersect(&frame, osd_rect)
@@ -1689,15 +1689,7 @@ unsafe extern "system" fn osd_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARA
                 let (x, y) = clamp_to_work_area(rect.left, rect.top, w_px, h_px, true);
                 if x != rect.left || y != rect.top {
                     unsafe {
-                        SetWindowPos(
-                            hwnd,
-                            HWND_TOPMOST,
-                            x,
-                            y,
-                            w_px,
-                            h_px,
-                            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
-                        );
+                        SetWindowPos(hwnd, HWND_TOPMOST, x, y, w_px, h_px, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
                     }
                 }
                 if let Ok(mut frame) = FRAME.lock()
@@ -1763,12 +1755,7 @@ fn register_classes() -> bool {
     }
 }
 
-fn build_global_scene(
-    settings: &Settings,
-    snapshot: &Snapshot,
-    global_hwnd: HWND,
-    breathe_step: u32,
-) -> Scene {
+fn build_global_scene(settings: &Settings, snapshot: &Snapshot, global_hwnd: HWND, breathe_step: u32) -> Scene {
     let style = &settings.overlay;
     let rules: Vec<_> = settings
         .rules
@@ -1792,8 +1779,12 @@ fn build_global_scene(
             };
             rows.push(AppRowData {
                 name: truncate_chars(&rule.name, 18),
-                down: style.show_rates.then(|| format!("↓ {}", format_speed(stats.download_rate))),
-                up: style.show_rates.then(|| format!("↑ {}", format_speed(stats.upload_rate))),
+                down: style
+                    .show_rates
+                    .then(|| format!("↓ {}", format_speed(stats.download_rate))),
+                up: style
+                    .show_rates
+                    .then(|| format!("↑ {}", format_speed(stats.upload_rate))),
                 total: style
                     .show_totals
                     .then(|| format!("Σ {}", format_bytes(stats.download_total + stats.upload_total))),
@@ -1838,13 +1829,7 @@ fn build_global_scene(
     }
 }
 
-fn build_window_scene(
-    rule_name: &str,
-    style: &Overlay,
-    stats: &RuleStats,
-    snapshot: &Snapshot,
-    target: HWND,
-) -> Scene {
+fn build_window_scene(rule_name: &str, style: &Overlay, stats: &RuleStats, snapshot: &Snapshot, target: HWND) -> Scene {
     let delay = match style.delay {
         Delay::Node => snapshot.node_delay.map(u64::from),
         Delay::Connection => stats.connection_delay,
@@ -1864,11 +1849,7 @@ fn build_window_scene(
     }
 }
 
-fn discover_target_windows(
-    settings: &Settings,
-    windows: &mut BTreeMap<usize, (Window, u32, u32)>,
-    own_pid: u32,
-) {
+fn discover_target_windows(settings: &Settings, windows: &mut BTreeMap<usize, (Window, u32, u32)>, own_pid: u32) {
     let filters: Vec<_> = settings
         .rules
         .iter()
@@ -1930,7 +1911,11 @@ fn run() {
         }
 
         let Some(mut renderer) = D2dRenderer::new() else {
-            logging!(warn, Type::System, "Failed to initialize Direct2D/DirectWrite OSD renderer");
+            logging!(
+                warn,
+                Type::System,
+                "Failed to initialize Direct2D/DirectWrite OSD renderer"
+            );
             if com_ok {
                 CoUninitialize();
             }
@@ -1952,7 +1937,12 @@ fn run() {
             ptr::null(),
         );
         if ctrl_hwnd.is_null() {
-            logging!(warn, Type::System, "Failed to create OSD controller window: {}", GetLastError());
+            logging!(
+                warn,
+                Type::System,
+                "Failed to create OSD controller window: {}",
+                GetLastError()
+            );
             if com_ok {
                 CoUninitialize();
             }
@@ -2001,7 +1991,8 @@ fn run() {
 
         while GetMessageW(&mut message, ptr::null_mut(), 0, 0) > 0 {
             let is_ctrl_update = message.hwnd == ctrl_hwnd && message.message == UPDATE;
-            let is_breathe = message.hwnd == ctrl_hwnd && message.message == WM_TIMER && message.wParam == BREATHE_TIMER_ID;
+            let is_breathe =
+                message.hwnd == ctrl_hwnd && message.message == WM_TIMER && message.wParam == BREATHE_TIMER_ID;
             if !is_ctrl_update && !is_breathe {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
@@ -2166,8 +2157,17 @@ mod tests {
 
     #[test]
     fn fallback_matcher_handles_basenames_paths_and_semicolons() {
-        assert!(fallback_matches("firefox.exe;chrome.exe", r"C:\Program Files\Mozilla Firefox\firefox.exe"));
-        assert!(fallback_matches(r"C:\Games\*\client?.exe", r"C:\Games\Test\client1.exe"));
-        assert!(!fallback_matches("chrome.exe", r"C:\Program Files\Mozilla Firefox\firefox.exe"));
+        assert!(fallback_matches(
+            "firefox.exe;chrome.exe",
+            r"C:\Program Files\Mozilla Firefox\firefox.exe"
+        ));
+        assert!(fallback_matches(
+            r"C:\Games\*\client?.exe",
+            r"C:\Games\Test\client1.exe"
+        ));
+        assert!(!fallback_matches(
+            "chrome.exe",
+            r"C:\Program Files\Mozilla Firefox\firefox.exe"
+        ));
     }
 }
