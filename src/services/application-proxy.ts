@@ -29,10 +29,16 @@ export type ApplicationOverlay = {
   scalePercent: number
   anchor:
     | 'outsideTopLeft'
+    | 'outsideTopCenter'
     | 'outsideTopRight'
+    | 'outsideBottomLeft'
+    | 'outsideBottomCenter'
+    | 'outsideBottomRight'
     | 'topLeft'
+    | 'topCenter'
     | 'topRight'
     | 'bottomLeft'
+    | 'bottomCenter'
     | 'bottomRight'
   offsetX: number
   offsetY: number

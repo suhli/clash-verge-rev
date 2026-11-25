@@ -9,7 +9,6 @@ import {
   FolderOpenRounded,
   LayersRounded,
   PauseCircleOutlineRounded,
-  PictureInPictureAltRounded,
   PlayCircleOutlineRounded,
   RefreshRounded,
   RestartAltRounded,
@@ -66,10 +65,16 @@ import { showNotice } from '@/services/notice-service'
 const ACTIONS = ['proxy', 'direct', 'block'] as const
 const ANCHORS = [
   'outsideTopLeft',
+  'outsideTopCenter',
   'outsideTopRight',
+  'outsideBottomLeft',
+  'outsideBottomCenter',
+  'outsideBottomRight',
   'topLeft',
+  'topCenter',
   'topRight',
   'bottomLeft',
+  'bottomCenter',
   'bottomRight',
 ] as const
 const REFRESH_RATES = [250, 500, 1000, 2000] as const
@@ -82,23 +87,6 @@ const COLOR_UL = '#A78BFA'
 const COLOR_OK = '#10B981'
 const COLOR_WARN = '#F59E0B'
 const COLOR_ERR = '#EF4444'
-
-function ensureWindowOverlayRules(
-  rules: ApplicationRule[],
-  windows: boolean,
-): ApplicationRule[] {
-  if (
-    !windows ||
-    rules.some(
-      (rule) => rule.enabled && rule.action === 'proxy' && rule.overlay,
-    )
-  ) {
-    return rules
-  }
-  return rules.map((rule) =>
-    rule.enabled && rule.action === 'proxy' ? { ...rule, overlay: true } : rule,
-  )
-}
 
 function newRule(
   name = '',
@@ -114,6 +102,20 @@ function newRule(
     enabled: true,
     overlay: true,
   }
+}
+
+function normalizeRulePattern(pattern: string) {
+  return pattern.trim().replaceAll('/', '\\').toLowerCase()
+}
+
+function deduplicateRules(rules: ApplicationRule[]) {
+  const seen = new Set<string>()
+  return rules.filter((rule) => {
+    const key = normalizeRulePattern(rule.pattern)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function formatBytes(value = 0) {
@@ -171,6 +173,7 @@ export default function ApplicationProxyPage() {
   const [appearance, setAppearance] = useState<ApplicationOverlay>()
   const [processes, setProcesses] = useState<ApplicationProcess[]>()
   const [processesLoading, setProcessesLoading] = useState(false)
+  const [processSearchKey, setProcessSearchKey] = useState(0)
   const [processMatcher, setProcessMatcher] = useState<
     (input: string) => boolean
   >(() => () => true)
@@ -227,10 +230,22 @@ export default function ApplicationProxyPage() {
     }
   }
 
-  async function loadProcesses() {
+  function closeProcessesDialog() {
+    setProcesses(undefined)
+    setSelected([])
+    setProcessMatcher(() => () => true)
+  }
+
+  async function loadProcesses(resetSearch = false) {
     setProcessesLoading(true)
     try {
-      setProcesses(await listApplicationProcesses())
+      const list = await listApplicationProcesses()
+      if (resetSearch) {
+        setSelected([])
+        setProcessMatcher(() => () => true)
+        setProcessSearchKey((key) => key + 1)
+      }
+      setProcesses(list)
     } catch (failure) {
       showNotice.error(failure)
     } finally {
@@ -243,21 +258,21 @@ export default function ApplicationProxyPage() {
     try {
       const files = await selectApplicationExecutables()
       if (files?.length) {
-        await save({
-          ...settings,
-          rules: [
-            ...settings.rules,
-            ...files.map((path) =>
-              newRule(
-                path
-                  .split(/[\\/]/)
-                  .pop()
-                  ?.replace(/\.exe$/i, '') ?? path,
-                path,
-              ),
+        const nextRules = deduplicateRules([
+          ...settings.rules,
+          ...files.map((path) =>
+            newRule(
+              path
+                .split(/[\\/]/)
+                .pop()
+                ?.replace(/\.exe$/i, '') ?? path,
+              path,
             ),
-          ],
-        })
+          ),
+        ])
+        if (nextRules.length !== settings.rules.length) {
+          await save({ ...settings, rules: nextRules })
+        }
       }
     } catch (failure) {
       showNotice.error(failure)
@@ -687,10 +702,6 @@ export default function ApplicationProxyPage() {
                     onChange={(_, windows) =>
                       void save({
                         ...settings,
-                        rules: ensureWindowOverlayRules(
-                          settings.rules,
-                          windows,
-                        ),
                         overlay: { ...settings.overlay, windows },
                       })
                     }
@@ -763,7 +774,7 @@ export default function ApplicationProxyPage() {
                   size="small"
                   startIcon={<AppsRounded fontSize="small" />}
                   disabled={saving || processesLoading}
-                  onClick={() => void loadProcesses()}
+                  onClick={() => void loadProcesses(true)}
                   sx={{ borderRadius: 1.5, textTransform: 'none' }}
                 >
                   {t('layout.applicationProxy.processes')}
@@ -957,30 +968,6 @@ export default function ApplicationProxyPage() {
                         spacing={0.25}
                         sx={{ alignItems: 'center', ml: 'auto' }}
                       >
-                        {rule.action === 'proxy' ? (
-                          <Tooltip
-                            title={t('layout.applicationProxy.windowOverlay')}
-                            arrow
-                          >
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={saving}
-                                color={rule.overlay ? 'primary' : 'default'}
-                                sx={{
-                                  opacity: rule.overlay ? 1 : 0.45,
-                                }}
-                                onClick={() =>
-                                  updateRule(rule.id, {
-                                    overlay: !rule.overlay,
-                                  })
-                                }
-                              >
-                                <PictureInPictureAltRounded fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        ) : null}
                         <Tooltip title={t('layout.applicationProxy.up')} arrow>
                           <span>
                             <IconButton
@@ -1076,26 +1063,24 @@ export default function ApplicationProxyPage() {
         }
         cancelBtn={t('layout.applicationProxy.cancel')}
         disableOk={!selected.length || saving}
-        onCancel={() => {
-          setProcesses(undefined)
-          setSelected([])
-        }}
-        onClose={() => {
-          setProcesses(undefined)
-          setSelected([])
-        }}
+        onCancel={closeProcessesDialog}
+        onClose={closeProcessesDialog}
         onOk={() => {
           if (!settings || !processes) return
           const rules = processes
             .filter((entry) => selected.includes(entry.path))
             .map((entry) => newRule(entry.name, entry.path, entry.icon))
+          const nextRules = deduplicateRules([...settings.rules, ...rules])
+          if (nextRules.length === settings.rules.length) {
+            closeProcessesDialog()
+            return
+          }
           void save({
             ...settings,
-            rules: [...settings.rules, ...rules],
+            rules: nextRules,
           }).then((ok) => {
             if (ok) {
-              setProcesses(undefined)
-              setSelected([])
+              closeProcessesDialog()
             }
           })
         }}
@@ -1103,6 +1088,7 @@ export default function ApplicationProxyPage() {
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
           <Box sx={{ flex: 1 }}>
             <BaseSearchBox
+              key={processSearchKey}
               placeholder={t('layout.applicationProxy.search')}
               onSearch={(match) => setProcessMatcher(() => match)}
             />
@@ -1182,13 +1168,18 @@ export default function ApplicationProxyPage() {
         onClose={() => setEditing(undefined)}
         onOk={() => {
           if (!settings || !editing) return
-          const rules =
+          const nextRules = deduplicateRules(
             editing.id === 0
               ? [...settings.rules, editing]
               : settings.rules.map((rule) =>
                   rule.id === editing.id ? editing : rule,
-                )
-          void save({ ...settings, rules }).then((ok) => {
+                ),
+          )
+          if (editing.id === 0 && nextRules.length === settings.rules.length) {
+            setEditing(undefined)
+            return
+          }
+          void save({ ...settings, rules: nextRules }).then((ok) => {
             if (ok) setEditing(undefined)
           })
         }}
@@ -1268,23 +1259,6 @@ export default function ApplicationProxyPage() {
                 />
               </Button>
             </Stack>
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                pt: 0.5,
-              }}
-            >
-              <Typography variant="body2">
-                {t('layout.applicationProxy.windowOverlay')}
-              </Typography>
-              <Switch
-                edge="end"
-                checked={editing.overlay}
-                onChange={(_, overlay) => setEditing({ ...editing, overlay })}
-              />
-            </Box>
           </Stack>
         ) : null}
       </BaseDialog>
@@ -1300,14 +1274,7 @@ export default function ApplicationProxyPage() {
         onClose={() => setAppearance(undefined)}
         onOk={() => {
           if (appearance && settings) {
-            void save({
-              ...settings,
-              rules: ensureWindowOverlayRules(
-                settings.rules,
-                appearance.windows,
-              ),
-              overlay: appearance,
-            }).then((ok) => {
+            void save({ ...settings, overlay: appearance }).then((ok) => {
               if (ok) setAppearance(undefined)
             })
           }

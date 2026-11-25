@@ -25,6 +25,7 @@ pub struct Endpoint {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Plan {
     pub endpoint: Option<Endpoint>,
+    pub bypass_ports: Vec<u16>,
     pub rules: Vec<EngineRule>,
     pub fail_open: bool,
     pub ready: bool,
@@ -73,6 +74,7 @@ type Stats = unsafe extern "C" fn(*const u32, *mut Counters, u32) -> i32;
 type Match = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 type AddProxy = unsafe extern "C" fn(i32, *const c_char, u16, *const c_char, *const c_char, i32) -> u32;
 type EditProxy = unsafe extern "C" fn(u32, i32, *const c_char, u16, *const c_char, *const c_char, i32) -> i32;
+type SetBypassPorts = unsafe extern "C" fn(*const u16, u32);
 
 struct Api {
     start: Lifecycle,
@@ -83,6 +85,7 @@ struct Api {
     match_process: Match,
     add_proxy: AddProxy,
     edit_proxy: EditProxy,
+    set_local_bypass_ports: SetBypassPorts,
 }
 
 static API: OnceLock<Result<Api, String>> = OnceLock::new();
@@ -134,6 +137,7 @@ impl Api {
             match_process: get!(c"ProxyBridge_MatchesProcess", Match),
             add_proxy: get!(c"ProxyBridge_AddProxyConfig", AddProxy),
             edit_proxy: get!(c"ProxyBridge_EditProxyConfig", EditProxy),
+            set_local_bypass_ports: get!(c"ProxyBridge_SetLocalBypassPorts", SetBypassPorts),
         })
     }
 }
@@ -219,6 +223,10 @@ impl Engine {
                 );
             }
             self.endpoint = Some(endpoint);
+        }
+
+        unsafe {
+            (api.set_local_bypass_ports)(plan.bypass_ports.as_ptr(), plan.bypass_ports.len() as u32);
         }
 
         ensure!(

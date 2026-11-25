@@ -5,6 +5,7 @@ use super::{
 };
 use clash_verge_logging::{Type, logging};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     ffi::{CString, c_void},
     mem::size_of,
@@ -43,7 +44,10 @@ use windows::{
     core::{HSTRING, PCWSTR},
 };
 use windows_sys::Win32::{
-    Foundation::{ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM},
+    Foundation::{
+        CloseHandle, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, INVALID_HANDLE_VALUE, LPARAM, LRESULT, POINT,
+        RECT, SIZE, WPARAM,
+    },
     Graphics::{
         Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
         Gdi::{
@@ -53,23 +57,27 @@ use windows_sys::Win32::{
             MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject,
         },
     },
-    System::LibraryLoader::GetModuleHandleW,
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+        },
+        LibraryLoader::GetModuleHandleW,
+    },
     UI::{
         Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
         HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetThreadDpiAwarenessContext},
         WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EVENT_OBJECT_LOCATIONCHANGE,
             EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, EnumChildWindows,
-            EnumWindows, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWLP_USERDATA, GetClientRect, GetForegroundWindow,
-            GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-            HTCAPTION, HTTRANSPARENT, HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_SIZEALL, IsIconic,
-            IsWindow, IsWindowVisible, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, OBJID_WINDOW, PostMessageW,
-            RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-            SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer, SetWindowLongPtrW, SetWindowPos,
-            ShowWindow, SystemParametersInfoW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT,
-            WINEVENT_SKIPOWNPROCESS, WM_APP, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_MOUSEACTIVATE,
-            WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-            WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+            GWL_EXSTYLE, GWLP_USERDATA, GetClientRect, GetForegroundWindow, GetMessageW, GetSystemMetrics,
+            GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HTCAPTION, HTTRANSPARENT, HWND_MESSAGE,
+            HWND_TOPMOST, IDC_SIZEALL, IsIconic, IsWindow, IsWindowVisible, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG,
+            OBJID_WINDOW, PostMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE,
+            SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, ULW_ALPHA,
+            UpdateLayeredWindow, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_ENTERSIZEMOVE,
+            WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
         },
     },
 };
@@ -79,6 +87,7 @@ const BREATHE_TIMER_ID: usize = 1;
 const BREATHE_INTERVAL_MS: u32 = 125;
 const EDGE_SNAP_PX: i32 = 16;
 const MAX_GLOBAL_ROWS: usize = 8;
+const MAX_PARENT_DEPTH: usize = 5;
 
 const COLOR_OK: u32 = 0x10B981;
 const COLOR_WARN: u32 = 0xF59E0B;
@@ -93,10 +102,26 @@ const CTRL_CLASS: &[u16] = &[67, 86, 82, 65, 112, 112, 79, 83, 68, 67, 116, 114,
 static FRAME: Mutex<Option<(Settings, Snapshot)>> = Mutex::new(None);
 static CTRL_HWND: AtomicIsize = AtomicIsize::new(0);
 static QUEUED: AtomicBool = AtomicBool::new(false);
-static WINDOWS_DIRTY: AtomicBool = AtomicBool::new(true);
-static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
 static DRAGGING_GLOBAL: AtomicBool = AtomicBool::new(false);
 static STARTED: OnceLock<()> = OnceLock::new();
+
+#[derive(Default)]
+struct CompanionTrack {
+    osd_hwnd: HWND,
+    target_hwnd: HWND,
+    visible: bool,
+    width: i32,
+    height: i32,
+    last_x: i32,
+    last_y: i32,
+    anchor: Anchor,
+    offset_x: i32,
+    offset_y: i32,
+}
+
+thread_local! {
+    static COMPANION: RefCell<CompanionTrack> = RefCell::new(CompanionTrack::default());
+}
 
 pub fn publish(settings: &Settings, snapshot: &Snapshot) {
     let enabled = settings.overlay.global || settings.overlay.windows;
@@ -135,6 +160,17 @@ fn wake() {
     }
 }
 
+fn hide_companion_immediately() {
+    COMPANION.with(|cell| {
+        let mut track = cell.borrow_mut();
+        if track.visible && !track.osd_hwnd.is_null() {
+            unsafe { ShowWindow(track.osd_hwnd, SW_HIDE) };
+        }
+        track.visible = false;
+        track.target_hwnd = ptr::null_mut();
+    });
+}
+
 unsafe extern "system" fn win_event_callback(
     _: HWINEVENTHOOK,
     event: u32,
@@ -144,20 +180,83 @@ unsafe extern "system" fn win_event_callback(
     _: u32,
     _: u32,
 ) {
-    if hwnd.is_null() {
-        return;
-    }
     if event == EVENT_SYSTEM_FOREGROUND {
-        FOREGROUND_DIRTY.store(true, Ordering::Release);
-        WINDOWS_DIRTY.store(true, Ordering::Release);
+        COMPANION.with(|cell| {
+            let track = cell.borrow();
+            if track.visible && hwnd != track.target_hwnd && !track.osd_hwnd.is_null() {
+                unsafe { ShowWindow(track.osd_hwnd, SW_HIDE) };
+            }
+        });
+        COMPANION.with(|cell| {
+            let mut track = cell.borrow_mut();
+            if track.visible && hwnd != track.target_hwnd {
+                track.visible = false;
+                track.target_hwnd = ptr::null_mut();
+            }
+        });
         wake();
         return;
     }
-    let relevant = matches!(event, EVENT_SYSTEM_MINIMIZESTART | EVENT_SYSTEM_MINIMIZEEND)
-        || (event == EVENT_OBJECT_LOCATIONCHANGE && object == OBJID_WINDOW && child == 0);
-    if relevant {
-        WINDOWS_DIRTY.store(true, Ordering::Release);
+
+    if event == EVENT_SYSTEM_MINIMIZESTART {
+        COMPANION.with(|cell| {
+            let mut track = cell.borrow_mut();
+            if track.visible && hwnd == track.target_hwnd && !track.osd_hwnd.is_null() {
+                unsafe { ShowWindow(track.osd_hwnd, SW_HIDE) };
+                track.visible = false;
+                track.target_hwnd = ptr::null_mut();
+            }
+        });
         wake();
+        return;
+    }
+
+    if event == EVENT_SYSTEM_MINIMIZEEND {
+        wake();
+        return;
+    }
+
+    if event == EVENT_OBJECT_LOCATIONCHANGE && object == OBJID_WINDOW && child == 0 {
+        COMPANION.with(|cell| {
+            let mut track = cell.borrow_mut();
+            if !track.visible || hwnd != track.target_hwnd || track.osd_hwnd.is_null() {
+                return;
+            }
+            if unsafe { GetForegroundWindow() } != hwnd {
+                unsafe { ShowWindow(track.osd_hwnd, SW_HIDE) };
+                track.visible = false;
+                track.target_hwnd = ptr::null_mut();
+                return;
+            }
+            let Some((x, y)) = compute_target_position_with(
+                hwnd,
+                track.anchor,
+                track.offset_x,
+                track.offset_y,
+                track.width,
+                track.height,
+            ) else {
+                unsafe { ShowWindow(track.osd_hwnd, SW_HIDE) };
+                track.visible = false;
+                track.target_hwnd = ptr::null_mut();
+                return;
+            };
+            if x != track.last_x || y != track.last_y {
+                track.last_x = x;
+                track.last_y = y;
+                unsafe {
+                    SetWindowPos(
+                        track.osd_hwnd,
+                        HWND_TOPMOST,
+                        x,
+                        y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -713,20 +812,16 @@ struct Window {
     surface: Surface,
     last_scene: Option<Scene>,
     global: bool,
-    topmost: bool,
     width: i32,
     height: i32,
     visible: bool,
-    last_pos: Option<(i32, i32, HWND)>,
+    last_pos: Option<(i32, i32)>,
 }
 
 impl Window {
     fn new(global: bool) -> Option<Self> {
         unsafe {
-            let mut ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
-            if global {
-                ex_style |= WS_EX_TOPMOST;
-            }
+            let ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
             let hwnd = CreateWindowExW(
                 ex_style,
                 OSD_CLASS.as_ptr(),
@@ -756,7 +851,6 @@ impl Window {
                 surface: Surface::new(),
                 last_scene: None,
                 global,
-                topmost: global,
                 width: 0,
                 height: 0,
                 visible: false,
@@ -770,6 +864,9 @@ impl Window {
             unsafe { ShowWindow(self.hwnd, SW_HIDE) };
             self.visible = false;
             self.last_pos = None;
+        }
+        if !self.global {
+            hide_companion_immediately();
         }
     }
 
@@ -789,14 +886,7 @@ impl Window {
         }
     }
 
-    fn render_and_show(
-        &mut self,
-        renderer: &mut D2dRenderer,
-        scene: Scene,
-        style: &Overlay,
-        target: Option<HWND>,
-        own_pid: u32,
-    ) {
+    fn render_and_show(&mut self, renderer: &mut D2dRenderer, scene: Scene, style: &Overlay, target: Option<HWND>) {
         if self.global && DRAGGING_GLOBAL.load(Ordering::Acquire) {
             return;
         }
@@ -814,30 +904,31 @@ impl Window {
             (self.width, self.height)
         };
 
-        let (x, y, after) = if let Some(target) = target {
-            let Some((x, y)) = compute_target_position(target, style, width, height) else {
-                self.hide();
-                return;
-            };
-            let osd_rect = RECT {
-                left: x,
-                top: y,
-                right: x + width,
-                bottom: y + height,
-            };
-            if is_target_occluded(target, &osd_rect, own_pid) {
+        let (x, y) = if let Some(target) = target {
+            if unsafe { GetForegroundWindow() } != target {
                 self.hide();
                 return;
             }
-            let after = resolve_target_zorder(target, self.hwnd, own_pid);
-            (x, y, after)
+            let Some((x, y)) = compute_target_position_with(
+                target,
+                style.anchor,
+                style.offset_x,
+                style.offset_y,
+                width,
+                height,
+            ) else {
+                self.hide();
+                return;
+            };
+            (x, y)
         } else {
-            let (x, y) = clamp_to_work_area(style.global_x, style.global_y, width, height, false);
-            (x, y, HWND_TOPMOST)
+            clamp_to_work_area(style.global_x, style.global_y, width, height, false)
         };
 
-        let moved = self.last_pos.is_none_or(|(px, py, _)| px != x || py != y);
-        if needs_redraw || !self.visible {
+        let was_visible = self.visible
+            && (self.global || COMPANION.with(|cell| cell.borrow().visible));
+        let moved = self.last_pos != Some((x, y));
+        if needs_redraw || !was_visible {
             if !self.surface.present(self.hwnd, x, y) {
                 logging!(warn, Type::System, "UpdateLayeredWindow failed: err={}", unsafe {
                     GetLastError()
@@ -848,32 +939,14 @@ impl Window {
         }
 
         unsafe {
-            let want_topmost = after == HWND_TOPMOST;
-            if self.topmost && !want_topmost {
-                SetWindowPos(
-                    self.hwnd,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
-                );
-                self.topmost = false;
-            }
-
-            let need_zorder = !self.visible
-                || moved
-                || self.last_pos != Some((x, y, after))
-                || target.is_some_and(|t| !want_topmost && GetWindow(t, GW_HWNDPREV) != self.hwnd);
-            if !self.visible {
+            if !was_visible {
                 ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 self.visible = true;
             }
-            if need_zorder
+            if (!was_visible || moved || needs_redraw)
                 && SetWindowPos(
                     self.hwnd,
-                    after,
+                    HWND_TOPMOST,
                     x,
                     y,
                     width,
@@ -881,9 +954,24 @@ impl Window {
                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                 ) != 0
             {
-                self.topmost = want_topmost;
-                self.last_pos = Some((x, y, after));
+                self.last_pos = Some((x, y));
             }
+        }
+
+        if let Some(target) = target {
+            COMPANION.with(|cell| {
+                let mut track = cell.borrow_mut();
+                track.osd_hwnd = self.hwnd;
+                track.target_hwnd = target;
+                track.visible = true;
+                track.width = width;
+                track.height = height;
+                track.last_x = x;
+                track.last_y = y;
+                track.anchor = style.anchor;
+                track.offset_x = style.offset_x;
+                track.offset_y = style.offset_y;
+            });
         }
     }
 }
@@ -1494,12 +1582,22 @@ const fn compute_anchor_coords(
     width: i32,
     height: i32,
 ) -> (i32, i32) {
+    let frame_w = frame.right - frame.left;
     match anchor {
         Anchor::OutsideTopLeft => (frame.left + off_x, frame.top - height - off_y),
+        Anchor::OutsideTopCenter => (frame.left + (frame_w - width) / 2 + off_x, frame.top - height - off_y),
         Anchor::OutsideTopRight => (frame.right - width - off_x, frame.top - height - off_y),
+        Anchor::OutsideBottomLeft => (frame.left + off_x, frame.bottom + off_y),
+        Anchor::OutsideBottomCenter => (frame.left + (frame_w - width) / 2 + off_x, frame.bottom + off_y),
+        Anchor::OutsideBottomRight => (frame.right - width - off_x, frame.bottom + off_y),
         Anchor::TopLeft => (client_origin.x + off_x, client_origin.y + off_y),
+        Anchor::TopCenter => (client_origin.x + (client_w - width) / 2 + off_x, client_origin.y + off_y),
         Anchor::TopRight => (client_origin.x + client_w - width - off_x, client_origin.y + off_y),
         Anchor::BottomLeft => (client_origin.x + off_x, client_origin.y + client_h - height - off_y),
+        Anchor::BottomCenter => (
+            client_origin.x + (client_w - width) / 2 + off_x,
+            client_origin.y + client_h - height - off_y,
+        ),
         Anchor::BottomRight => (
             client_origin.x + client_w - width - off_x,
             client_origin.y + client_h - height - off_y,
@@ -1507,9 +1605,16 @@ const fn compute_anchor_coords(
     }
 }
 
-fn compute_target_position(target: HWND, style: &Overlay, width: i32, height: i32) -> Option<(i32, i32)> {
+fn compute_target_position_with(
+    target: HWND,
+    anchor: Anchor,
+    offset_x: i32,
+    offset_y: i32,
+    width: i32,
+    height: i32,
+) -> Option<(i32, i32)> {
     unsafe {
-        if IsWindow(target) == 0 || IsWindowVisible(target) == 0 || IsIconic(target) != 0 {
+        if IsWindow(target) == 0 || IsWindowVisible(target) == 0 || IsIconic(target) != 0 || is_window_cloaked(target) {
             return None;
         }
         let frame = visible_frame_rect(target)?;
@@ -1534,10 +1639,10 @@ fn compute_target_position(target: HWND, style: &Overlay, width: i32, height: i3
             };
 
         let dpi = GetDpiForWindow(target).max(96) as i32;
-        let off_x = style.offset_x * dpi / 96;
-        let off_y = style.offset_y * dpi / 96;
+        let off_x = offset_x * dpi / 96;
+        let off_y = offset_y * dpi / 96;
         let (mut x, mut y) = compute_anchor_coords(
-            style.anchor,
+            anchor,
             &frame,
             client_origin,
             client_w,
@@ -1566,10 +1671,6 @@ fn compute_target_position(target: HWND, style: &Overlay, width: i32, height: i3
     }
 }
 
-const fn rects_intersect(a: &RECT, b: &RECT) -> bool {
-    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
-}
-
 fn is_window_cloaked(hwnd: HWND) -> bool {
     let mut cloaked = 0u32;
     unsafe {
@@ -1583,65 +1684,95 @@ fn is_window_cloaked(hwnd: HWND) -> bool {
     }
 }
 
-fn is_target_occluded(target: HWND, osd_rect: &RECT, own_pid: u32) -> bool {
-    unsafe {
-        if IsIconic(target) != 0 || IsWindowVisible(target) == 0 || is_window_cloaked(target) {
-            return true;
-        }
-        // Active foreground window is never occluded by system topmost/shell ghost windows.
-        if GetForegroundWindow() == target {
-            return false;
-        }
-        let mut cur = GetWindow(target, GW_HWNDPREV);
-        let mut steps = 0u32;
-        while !cur.is_null() && steps < 256 {
-            steps += 1;
-            if IsWindowVisible(cur) != 0 && IsIconic(cur) == 0 && !is_window_cloaked(cur) {
-                let mut pid = 0;
-                GetWindowThreadProcessId(cur, &mut pid);
-                if pid != own_pid && GetWindow(cur, GW_OWNER) != target {
-                    let ex = GetWindowLongPtrW(cur, GWL_EXSTYLE) as u32;
-                    let non_occluding =
-                        (ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED)) != 0;
-                    if !non_occluding
-                        && let Some(frame) = visible_frame_rect(cur)
-                        && rects_intersect(&frame, osd_rect)
-                    {
-                        return true;
-                    }
-                }
-            }
-            cur = GetWindow(cur, GW_HWNDPREV);
-        }
-        false
-    }
+fn is_stop_boundary_exe(exe_name: &str) -> bool {
+    const BOUNDARIES: &[&str] = &[
+        "explorer.exe",
+        "svchost.exe",
+        "services.exe",
+        "wininit.exe",
+        "winlogon.exe",
+        "csrss.exe",
+        "smss.exe",
+        "lsass.exe",
+        "sihost.exe",
+        "RuntimeBroker.exe",
+        "ApplicationFrameHost.exe",
+        "StartMenuExperienceHost.exe",
+        "SearchHost.exe",
+        "System",
+        "[System Process]",
+    ];
+    exe_name.is_empty() || BOUNDARIES.iter().any(|b| exe_name.eq_ignore_ascii_case(b))
 }
 
-fn resolve_target_zorder(target: HWND, osd_hwnd: HWND, own_pid: u32) -> HWND {
+struct ProcEntry {
+    pid: u32,
+    parent_pid: u32,
+    exe_name: String,
+}
+
+fn snapshot_processes() -> Vec<ProcEntry> {
+    let mut entries = Vec::new();
     unsafe {
-        let target_ex = GetWindowLongPtrW(target, GWL_EXSTYLE) as u32;
-        if GetForegroundWindow() == target || (target_ex & WS_EX_TOPMOST) != 0 {
-            return HWND_TOPMOST;
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE || snap.is_null() {
+            return entries;
         }
-        let mut after = GetWindow(target, GW_HWNDPREV);
-        let mut steps = 0u32;
-        while !after.is_null() && steps < 64 {
-            steps += 1;
-            let mut pid = 0;
-            GetWindowThreadProcessId(after, &mut pid);
-            if after != osd_hwnd && pid != own_pid {
+        let mut pe = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snap, &mut pe) != 0 {
+            loop {
+                let end = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len());
+                entries.push(ProcEntry {
+                    pid: pe.th32ProcessID,
+                    parent_pid: pe.th32ParentProcessID,
+                    exe_name: String::from_utf16_lossy(&pe.szExeFile[..end]),
+                });
+                if Process32NextW(snap, &mut pe) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    entries
+}
+
+/// Collects `host_pid` and all descendant processes whose parent chain reaches `host_pid`
+/// (up to `MAX_PARENT_DEPTH` hops, cycle-safe, stopping at OS shell boundaries).
+fn collect_tree_pids(host_pid: u32, procs: &[ProcEntry]) -> Vec<u32> {
+    let by_pid: BTreeMap<u32, &ProcEntry> = procs.iter().map(|e| (e.pid, e)).collect();
+    let mut result = vec![host_pid];
+    for entry in procs {
+        if entry.pid == 0 || entry.pid == host_pid {
+            continue;
+        }
+        let mut cur = entry.parent_pid;
+        let mut visited = [0u32; MAX_PARENT_DEPTH + 1];
+        for v_len in 0..MAX_PARENT_DEPTH {
+            if cur == 0 || cur == entry.pid {
                 break;
             }
-            after = GetWindow(after, GW_HWNDPREV);
-        }
-        if after.is_null() {
-            HWND_TOP
-        } else if (GetWindowLongPtrW(after, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST) != 0 {
-            HWND_NOTOPMOST
-        } else {
-            after
+            if cur == host_pid {
+                result.push(entry.pid);
+                break;
+            }
+            if visited[..v_len].contains(&cur) {
+                break;
+            }
+            visited[v_len] = cur;
+            let Some(parent) = by_pid.get(&cur) else {
+                break;
+            };
+            if is_stop_boundary_exe(&parent.exe_name) {
+                break;
+            }
+            cur = parent.parent_pid;
         }
     }
+    result
 }
 
 struct UwpProbe {
@@ -1779,18 +1910,6 @@ unsafe extern "system" fn ctrl_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
     unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }
 
-unsafe extern "system" fn list_top_window(hwnd: HWND, arg: LPARAM) -> i32 {
-    let windows = unsafe { &mut *(arg as *mut Vec<HWND>) };
-    let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
-    if unsafe { IsWindowVisible(hwnd) } != 0
-        && (ex & WS_EX_TOOLWINDOW) == 0
-        && (unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() || (ex & WS_EX_APPWINDOW) != 0)
-    {
-        windows.push(hwnd);
-    }
-    1
-}
-
 fn register_classes() -> bool {
     unsafe {
         let hinst = GetModuleHandleW(ptr::null());
@@ -1913,33 +2032,76 @@ fn build_window_scene(rule_name: &str, style: &Overlay, stats: &RuleStats, snaps
     }
 }
 
-fn discover_target_windows(settings: &Settings, windows: &mut BTreeMap<usize, (Window, u32, u32)>, own_pid: u32) {
+struct TreeCache {
+    host_pid: u32,
+    pids: Vec<u32>,
+    captured_at: Instant,
+}
+
+impl TreeCache {
+    fn resolve(&mut self, host_pid: u32) -> &[u32] {
+        if self.host_pid != host_pid || self.captured_at.elapsed() >= Duration::from_millis(500) {
+            let procs = snapshot_processes();
+            self.pids = collect_tree_pids(host_pid, &procs);
+            self.host_pid = host_pid;
+            self.captured_at = Instant::now();
+        }
+        &self.pids
+    }
+}
+
+struct ForegroundMatch {
+    hwnd: HWND,
+    name: String,
+    stats: RuleStats,
+}
+
+fn match_foreground_app(
+    settings: &Settings,
+    snapshot: &Snapshot,
+    own_pid: u32,
+    tree_cache: &mut Option<TreeCache>,
+) -> Option<ForegroundMatch> {
+    let fg = unsafe { GetForegroundWindow() };
+    if fg.is_null()
+        || unsafe { IsWindow(fg) } == 0
+        || unsafe { IsWindowVisible(fg) } == 0
+        || unsafe { IsIconic(fg) } != 0
+        || is_window_cloaked(fg)
+        || (unsafe { GetWindowLongPtrW(fg, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW) != 0
+    {
+        return None;
+    }
+
+    let fg_pid = resolve_window_pid(fg);
+    if fg_pid == 0 || fg_pid == own_pid {
+        return None;
+    }
+
     let filters: Vec<_> = settings
         .rules
         .iter()
         .filter(|rule| rule.enabled)
         .filter_map(|rule| CString::new(rule.pattern.as_bytes()).ok().map(|c| (rule, c)))
         .collect();
-
-    let mut candidates: Vec<HWND> = Vec::new();
-    unsafe { EnumWindows(Some(list_top_window), (&mut candidates as *mut Vec<HWND>) as LPARAM) };
-    let fg = unsafe { GetForegroundWindow() };
-    if !fg.is_null()
-        && unsafe { IsWindowVisible(fg) } != 0
-        && (unsafe { GetWindowLongPtrW(fg, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW) == 0
-        && !candidates.contains(&fg)
-    {
-        candidates.push(fg);
+    if filters.is_empty() {
+        return None;
     }
 
-    let mut seen = BTreeSet::new();
+    let cache = tree_cache.get_or_insert_with(|| TreeCache {
+        host_pid: 0,
+        pids: Vec::new(),
+        captured_at: Instant::now()
+            .checked_sub(Duration::from_secs(10))
+            .unwrap_or_else(Instant::now),
+    });
+    let tree_pids = cache.resolve(fg_pid);
+
+    let mut matched_ids = BTreeSet::new();
+    let mut primary_name: Option<String> = None;
     let mut images: BTreeMap<u32, Option<(String, CString)>> = BTreeMap::new();
 
-    for hwnd in candidates {
-        let pid = resolve_window_pid(hwnd);
-        if pid == 0 || pid == own_pid {
-            continue;
-        }
+    for &pid in tree_pids {
         let entry = images.entry(pid).or_insert_with(|| {
             let image = process::image(pid)?;
             let cstr = CString::new(image.as_bytes()).ok()?;
@@ -1954,21 +2116,115 @@ fn discover_target_windows(settings: &Settings, windows: &mut BTreeMap<usize, (W
         else {
             continue;
         };
-        if rule.action != Action::Proxy || !rule.overlay {
+        if rule.action != Action::Proxy {
             continue;
         }
-        let key = hwnd as usize;
-        seen.insert(key);
-        if windows.get(&key).is_some_and(|(_, old_pid, _)| *old_pid != pid) {
-            windows.remove(&key);
-        }
-        if let Some(existing) = windows.get_mut(&key) {
-            existing.2 = rule.id;
-        } else if let Some(window) = Window::new(false) {
-            windows.insert(key, (window, pid, rule.id));
+        matched_ids.insert(rule.id);
+        if pid == fg_pid || primary_name.is_none() {
+            primary_name = Some(rule.name.clone());
         }
     }
-    windows.retain(|key, _| seen.contains(key));
+
+    if matched_ids.is_empty() {
+        return None;
+    }
+
+    let mut aggregated = RuleStats::default();
+    for id in &matched_ids {
+        if let Some(s) = snapshot.rules.get(id) {
+            aggregated.upload_rate = aggregated.upload_rate.saturating_add(s.upload_rate);
+            aggregated.download_rate = aggregated.download_rate.saturating_add(s.download_rate);
+            aggregated.upload_total = aggregated.upload_total.saturating_add(s.upload_total);
+            aggregated.download_total = aggregated.download_total.saturating_add(s.download_total);
+            aggregated.session_upload = aggregated.session_upload.saturating_add(s.session_upload);
+            aggregated.session_download = aggregated.session_download.saturating_add(s.session_download);
+            aggregated.active = aggregated.active.saturating_add(s.active);
+            aggregated.failures = aggregated.failures.saturating_add(s.failures);
+            if let Some(delay) = s.connection_delay {
+                aggregated.connection_delay = Some(
+                    aggregated
+                        .connection_delay
+                        .map_or(delay, |old| old.min(delay)),
+                );
+            }
+        }
+    }
+
+    Some(ForegroundMatch {
+        hwnd: fg,
+        name: primary_name.unwrap_or_default(),
+        stats: aggregated,
+    })
+}
+
+struct OverlayState {
+    global: Option<Window>,
+    companion: Option<Window>,
+    tree_cache: Option<TreeCache>,
+    breathe_step: u32,
+    timer_active: bool,
+    own_pid: u32,
+}
+
+impl OverlayState {
+    fn sync(
+        &mut self,
+        renderer: &mut D2dRenderer,
+        ctrl_hwnd: HWND,
+        settings: &Settings,
+        snapshot: &Snapshot,
+        breathe_only: bool,
+    ) {
+        let style = &settings.overlay;
+        if style.global {
+            if self.global.is_none() {
+                self.global = Window::new(true);
+            }
+            let want_timer = snapshot.running && snapshot.endpoint_ready;
+            if want_timer && !self.timer_active {
+                unsafe { SetTimer(ctrl_hwnd, BREATHE_TIMER_ID, BREATHE_INTERVAL_MS, None) };
+                self.timer_active = true;
+            } else if !want_timer && self.timer_active {
+                unsafe { KillTimer(ctrl_hwnd, BREATHE_TIMER_ID) };
+                self.timer_active = false;
+            }
+            if let Some(window) = &mut self.global {
+                let scene = build_global_scene(settings, snapshot, window.hwnd, self.breathe_step);
+                window.render_and_show(renderer, scene, style, None);
+            }
+        } else {
+            if self.timer_active {
+                unsafe { KillTimer(ctrl_hwnd, BREATHE_TIMER_ID) };
+                self.timer_active = false;
+            }
+            self.global = None;
+        }
+
+        if breathe_only {
+            return;
+        }
+
+        if !style.windows {
+            if let Some(win) = &mut self.companion {
+                win.hide();
+            }
+            self.companion = None;
+            self.tree_cache = None;
+            return;
+        }
+
+        if let Some(matched) = match_foreground_app(settings, snapshot, self.own_pid, &mut self.tree_cache) {
+            if self.companion.is_none() {
+                self.companion = Window::new(false);
+            }
+            if let Some(win) = &mut self.companion {
+                let scene = build_window_scene(&matched.name, style, &matched.stats, snapshot, matched.hwnd);
+                win.render_and_show(renderer, scene, style, Some(matched.hwnd));
+            }
+        } else if let Some(win) = &mut self.companion {
+            win.hide();
+        }
+    }
 }
 
 fn run() {
@@ -2052,13 +2308,14 @@ fn run() {
 
         wake();
 
-        let own_pid = std::process::id();
-        let mut windows: BTreeMap<usize, (Window, u32, u32)> = BTreeMap::new();
-        let mut global: Option<Window> = None;
-        let mut last_discovery: Option<Instant> = None;
-        let mut last_rules = Vec::new();
-        let mut breathe_step = 0u32;
-        let mut timer_active = false;
+        let mut state = OverlayState {
+            global: None,
+            companion: None,
+            tree_cache: None,
+            breathe_step: 0,
+            timer_active: false,
+            own_pid: std::process::id(),
+        };
         let mut message = MSG::default();
 
         while GetMessageW(&mut message, ptr::null_mut(), 0, 0) > 0 {
@@ -2074,94 +2331,22 @@ fn run() {
                 QUEUED.store(false, Ordering::Release);
             }
             if is_breathe {
-                breathe_step = breathe_step.wrapping_add(1);
+                state.breathe_step = state.breathe_step.wrapping_add(1);
             }
 
-            let Some((settings, snapshot)) = FRAME.lock().ok().and_then(|frame| frame.clone()) else {
-                continue;
-            };
-            let style = &settings.overlay;
-
-            if style.global {
-                if global.is_none() {
-                    global = Window::new(true);
-                }
-                let want_timer = snapshot.running && snapshot.endpoint_ready;
-                if want_timer && !timer_active {
-                    SetTimer(ctrl_hwnd, BREATHE_TIMER_ID, BREATHE_INTERVAL_MS, None);
-                    timer_active = true;
-                } else if !want_timer && timer_active {
-                    KillTimer(ctrl_hwnd, BREATHE_TIMER_ID);
-                    timer_active = false;
-                }
-                if let Some(window) = &mut global {
-                    let scene = build_global_scene(&settings, &snapshot, window.hwnd, breathe_step);
-                    window.render_and_show(&mut renderer, scene, style, None, own_pid);
-                }
-            } else {
-                if timer_active {
-                    KillTimer(ctrl_hwnd, BREATHE_TIMER_ID);
-                    timer_active = false;
-                }
-                global = None;
+            if let Some((settings, snapshot)) = FRAME.lock().ok().and_then(|frame| frame.clone()) {
+                state.sync(&mut renderer, ctrl_hwnd, &settings, &snapshot, is_breathe && !is_ctrl_update);
             }
-
-            if is_breathe && !is_ctrl_update {
-                continue;
-            }
-
-            if !style.windows || !snapshot.running {
-                windows.clear();
-                last_discovery = None;
-                continue;
-            }
-
-            let fg_changed = FOREGROUND_DIRTY.swap(false, Ordering::AcqRel);
-            let dirty = WINDOWS_DIRTY.swap(false, Ordering::AcqRel);
-            if fg_changed
-                || last_rules != settings.rules
-                || last_discovery
-                    .is_none_or(|instant| instant.elapsed() >= Duration::from_millis(if dirty { 250 } else { 2000 }))
-            {
-                last_rules.clone_from(&settings.rules);
-                last_discovery = Some(Instant::now());
-                discover_target_windows(&settings, &mut windows, own_pid);
-            }
-
-            windows.retain(|key, (window, pid, rule_id)| {
-                let hwnd = *key as HWND;
-                if IsWindow(hwnd) == 0 || resolve_window_pid(hwnd) != *pid {
-                    return false;
-                }
-                let Some(rule) = settings
-                    .rules
-                    .iter()
-                    .find(|rule| rule.id == *rule_id && rule.enabled && rule.action == Action::Proxy && rule.overlay)
-                else {
-                    return false;
-                };
-                if is_window_cloaked(hwnd) || IsIconic(hwnd) != 0 || IsWindowVisible(hwnd) == 0 {
-                    window.hide();
-                    return true;
-                }
-                let stats = snapshot.rules.get(rule_id).cloned().unwrap_or_default();
-                let scene = build_window_scene(&rule.name, style, &stats, &snapshot, hwnd);
-                window.render_and_show(&mut renderer, scene, style, Some(hwnd), own_pid);
-                true
-            });
         }
 
-        if timer_active {
+        hide_companion_immediately();
+        if state.timer_active {
             KillTimer(ctrl_hwnd, BREATHE_TIMER_ID);
         }
-        if !hook_loc.is_null() {
-            UnhookWinEvent(hook_loc);
-        }
-        if !hook_min.is_null() {
-            UnhookWinEvent(hook_min);
-        }
-        if !hook_fg.is_null() {
-            UnhookWinEvent(hook_fg);
+        for hook in [hook_loc, hook_min, hook_fg] {
+            if !hook.is_null() {
+                UnhookWinEvent(hook);
+            }
         }
         CTRL_HWND.store(0, Ordering::Release);
         DestroyWindow(ctrl_hwnd);
@@ -2259,16 +2444,73 @@ mod tests {
             (100, 172)
         );
         assert_eq!(
+            compute_anchor_coords(Anchor::OutsideTopCenter, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (390, 172)
+        );
+        assert_eq!(
             compute_anchor_coords(Anchor::OutsideTopRight, &frame, origin, 784, 460, 0, 4, 220, 24),
             (680, 172)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::OutsideBottomLeft, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (100, 704)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::OutsideBottomCenter, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (390, 704)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::OutsideBottomRight, &frame, origin, 784, 460, 0, 4, 220, 24),
+            (680, 704)
         );
         assert_eq!(
             compute_anchor_coords(Anchor::TopLeft, &frame, origin, 784, 460, 8, 8, 220, 24),
             (116, 240)
         );
         assert_eq!(
+            compute_anchor_coords(Anchor::TopCenter, &frame, origin, 784, 460, 0, 8, 220, 24),
+            (390, 240)
+        );
+        assert_eq!(
+            compute_anchor_coords(Anchor::BottomCenter, &frame, origin, 784, 460, 0, 8, 220, 24),
+            (390, 660)
+        );
+        assert_eq!(
             compute_anchor_coords(Anchor::BottomRight, &frame, origin, 784, 460, 8, 8, 220, 24),
             (664, 660)
         );
+    }
+
+    #[test]
+    fn collects_descendant_process_tree_and_respects_boundaries() {
+        let procs = vec![
+            ProcEntry {
+                pid: 100,
+                parent_pid: 1,
+                exe_name: "explorer.exe".into(),
+            },
+            ProcEntry {
+                pid: 200,
+                parent_pid: 100,
+                exe_name: "ChatGPT.exe".into(),
+            },
+            ProcEntry {
+                pid: 201,
+                parent_pid: 200,
+                exe_name: "codex.exe".into(),
+            },
+            ProcEntry {
+                pid: 202,
+                parent_pid: 201,
+                exe_name: "node_repl.exe".into(),
+            },
+            ProcEntry {
+                pid: 300,
+                parent_pid: 100,
+                exe_name: "notepad.exe".into(),
+            },
+        ];
+        let tree = collect_tree_pids(200, &procs);
+        assert_eq!(tree, vec![200, 201, 202]);
     }
 }

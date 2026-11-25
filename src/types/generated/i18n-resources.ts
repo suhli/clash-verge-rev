@@ -199,6 +199,7 @@ export interface TranslationResources {
         add: string
         anchor: string
         background: string
+        bottomCenter: string
         bottomLeft: string
         bottomRight: string
         cancel: string
@@ -226,6 +227,10 @@ export interface TranslationResources {
         offsetX: string
         offsetY: string
         opacity: string
+        outsideBottomCenter: string
+        outsideBottomLeft: string
+        outsideBottomRight: string
+        outsideTopCenter: string
         outsideTopLeft: string
         outsideTopRight: string
         overlay: string
@@ -247,6 +252,7 @@ export interface TranslationResources {
         stopped: string
         systemProxy: string
         title: string
+        topCenter: string
         topLeft: string
         topRight: string
         tunConflict: string

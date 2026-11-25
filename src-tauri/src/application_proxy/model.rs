@@ -32,10 +32,16 @@ pub struct Rule {
 pub enum Anchor {
     #[default]
     OutsideTopLeft,
+    OutsideTopCenter,
     OutsideTopRight,
+    OutsideBottomLeft,
+    OutsideBottomCenter,
+    OutsideBottomRight,
     TopLeft,
+    TopCenter,
     TopRight,
     BottomLeft,
+    BottomCenter,
     BottomRight,
 }
 

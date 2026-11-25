@@ -114,14 +114,23 @@ pub(crate) async fn tun_conflict() -> bool {
         .is_some_and(|state| state.stored.settings.enabled)
 }
 
-async fn endpoint_and_mode() -> (Option<Endpoint>, bool) {
+async fn endpoint_and_mode() -> (Option<Endpoint>, Vec<u16>, bool) {
     let runtime = Config::runtime().await.data_arc();
     let config = runtime.config.as_ref();
     let global = config
         .and_then(|config| config.get("mode"))
         .and_then(serde_yaml_ng::Value::as_str)
         .is_some_and(|mode| mode.eq_ignore_ascii_case("global"));
-    let Some(config) = config else { return (None, global) };
+    let Some(config) = config else {
+        return (None, Vec::new(), global);
+    };
+    let bypass_ports: Vec<u16> = ["mixed-port", "socks-port", "port", "redir-port", "tproxy-port"]
+        .iter()
+        .filter_map(|key| config.get(*key)?.as_u64().and_then(|port| u16::try_from(port).ok()))
+        .filter(|port| *port != 0)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let port = ["socks-port", "mixed-port"]
         .iter()
         .filter_map(|key| config.get(*key)?.as_u64().and_then(|port| u16::try_from(port).ok()))
@@ -146,7 +155,7 @@ async fn endpoint_and_mode() -> (Option<Endpoint>, bool) {
             password: password.into(),
         }
     });
-    (endpoint, global)
+    (endpoint, bypass_ports, global)
 }
 
 async fn socks_ready(endpoint: &Endpoint) -> Result<bool> {
@@ -314,7 +323,7 @@ impl Controller {
             self.helper = Some(Helper::start().await?);
         }
         let Some(helper) = &mut self.helper else { return Ok(()) };
-        let (endpoint, global) = endpoint_and_mode().await;
+        let (endpoint, bypass_ports, global) = endpoint_and_mode().await;
         if self
             .probe
             .as_ref()
@@ -333,6 +342,7 @@ impl Controller {
         let ready = self.probe.as_ref().is_some_and(|(_, _, ready)| *ready);
         let plan = Plan {
             endpoint,
+            bypass_ports,
             rules: self
                 .stored
                 .settings
@@ -371,21 +381,10 @@ impl Controller {
 }
 
 fn validate(settings: &mut Settings, last_id: &mut u32) -> Result<()> {
-    ensure!(
-        settings.rules.len() <= 256,
-        "A maximum of 256 application rules is supported"
-    );
     let mut ids = BTreeSet::new();
-    for rule in &mut settings.rules {
-        if rule.id == 0 {
-            *last_id = last_id.checked_add(1).context("Application rule ID exhausted")?;
-            rule.id = *last_id;
-        }
-        ensure!(
-            rule.id <= 65535 && ids.insert(rule.id),
-            "Invalid or duplicate application rule ID"
-        );
-        *last_id = (*last_id).max(rule.id);
+    let mut seen_patterns = BTreeSet::new();
+    let mut unique = Vec::with_capacity(settings.rules.len());
+    for mut rule in std::mem::take(&mut settings.rules) {
         rule.pattern = rule.pattern.trim().replace('/', "\\");
         ensure!(
             !rule.pattern.is_empty() && rule.pattern.len() < 24576 && !rule.pattern.contains('\0'),
@@ -395,7 +394,22 @@ fn validate(settings: &mut Settings, last_id: &mut u32) -> Result<()> {
             !rule.name.trim().is_empty() && rule.name.len() <= 256,
             "Invalid application display name"
         );
+        if !seen_patterns.insert(rule.pattern.to_lowercase()) {
+            continue;
+        }
+        if rule.id == 0 {
+            *last_id = last_id.checked_add(1).context("Application rule ID exhausted")?;
+            rule.id = *last_id;
+        }
+        ensure!(
+            rule.id <= 65535 && ids.insert(rule.id),
+            "Invalid or duplicate application rule ID"
+        );
+        *last_id = (*last_id).max(rule.id);
+        unique.push(rule);
     }
+    ensure!(unique.len() <= 256, "A maximum of 256 application rules is supported");
+    settings.rules = unique;
     let overlay = &settings.overlay;
     ensure!(
         [250, 500, 1000, 2000].contains(&overlay.refresh_ms),
@@ -484,23 +498,7 @@ pub(crate) async fn toggle_tray(switch: TraySwitch) -> Result<()> {
             }
         }
         TraySwitch::GlobalOverlay => stored.settings.overlay.global = !stored.settings.overlay.global,
-        TraySwitch::WindowOverlay => {
-            let next = !stored.settings.overlay.windows;
-            stored.settings.overlay.windows = next;
-            if next
-                && !stored
-                    .settings
-                    .rules
-                    .iter()
-                    .any(|rule| rule.enabled && rule.action == Action::Proxy && rule.overlay)
-            {
-                for rule in &mut stored.settings.rules {
-                    if rule.enabled && rule.action == Action::Proxy {
-                        rule.overlay = true;
-                    }
-                }
-            }
-        }
+        TraySwitch::WindowOverlay => stored.settings.overlay.windows = !stored.settings.overlay.windows,
     }
     save(&stored).await?;
     state.stored = stored;
@@ -583,4 +581,54 @@ pub fn start_monitor() {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use model::Rule;
+
+    #[test]
+    fn validate_deduplicates_normalized_executable_patterns_silently() {
+        let mut settings = Settings {
+            rules: vec![
+                Rule {
+                    id: 1,
+                    name: "App".into(),
+                    pattern: r"C:\Tools\App.exe".into(),
+                    icon: None,
+                    action: Action::Proxy,
+                    enabled: true,
+                    overlay: true,
+                },
+                Rule {
+                    id: 0,
+                    name: "App duplicate".into(),
+                    pattern: "  c:/tools/app.exe  ".into(),
+                    icon: None,
+                    action: Action::Proxy,
+                    enabled: true,
+                    overlay: true,
+                },
+                Rule {
+                    id: 0,
+                    name: "Other".into(),
+                    pattern: r"C:\Tools\Other.exe".into(),
+                    icon: None,
+                    action: Action::Proxy,
+                    enabled: true,
+                    overlay: true,
+                },
+            ],
+            ..Settings::default()
+        };
+        let mut last_id = 1;
+        validate(&mut settings, &mut last_id).expect("validate should succeed");
+        assert_eq!(settings.rules.len(), 2);
+        assert_eq!(settings.rules[0].id, 1);
+        assert_eq!(settings.rules[0].pattern, r"C:\Tools\App.exe");
+        assert_eq!(settings.rules[1].id, 2);
+        assert_eq!(settings.rules[1].pattern, r"C:\Tools\Other.exe");
+        assert_eq!(last_id, 2);
+    }
 }
